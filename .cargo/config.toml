@@ -12,3 +12,10 @@ fmt-stacks = "fmt -- --config group_imports=StdExternalCrate,imports_granularity
 #linker = "/usr/bin/clang"
 #rustflags = ["-Clink-arg=-fuse-ld=lld", "-Clink-arg=-Wl,--no-rosegment"]
 
+[patch."https://github.com/stacks-network/stacks-core.git"]
+clarity = { path = "./clarity" }
+stacks-common = { path = "./stacks-common" }
+
+# Uncomment the patch below to use the local version of clarity-wasm
+# [patch.'https://github.com/stacks-network/clarity-wasm.git']
+# clar2wasm = { path = "../clarity-wasm/clar2wasm" }

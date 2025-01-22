@@ -19,6 +19,7 @@ pub mod log;
 #[macro_use]
 pub mod macros;
 pub mod chunked_encoding;
+#[cfg(feature = "canonical")]
 pub mod db;
 pub mod hash;
 pub mod pair;
@@ -26,6 +27,7 @@ pub mod pipe;
 pub mod retry;
 pub mod secp256k1;
 pub mod uint;
+#[cfg(feature = "vrf")]
 pub mod vrf;
 
 use std::collections::HashMap;

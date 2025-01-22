@@ -20,6 +20,7 @@
 use std::cmp::Ordering;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
+use std::io::{Read, Write};
 /// This codebase is based on routines defined in the IETF draft for verifiable random functions
 /// over elliptic curves (https://tools.ietf.org/id/draft-irtf-cfrg-vrf-02.html).
 use std::ops::Deref;
@@ -35,6 +36,9 @@ use ed25519_dalek::{
 use rand;
 use sha2::{Digest, Sha512};
 
+use super::hash::Sha512Trunc256Sum;
+use crate::codec::{Error as CodecError, StacksMessageCodec};
+use crate::types::chainstate::VRFSeed;
 use crate::util::hash::{hex_bytes, to_hex};
 
 #[derive(Clone)]
@@ -530,6 +534,42 @@ impl VRF {
 
         // NOTE: this leverages constant-time comparison inherited from the Scalar impl
         Ok(c_prime == *(proof.c()))
+    }
+}
+
+impl StacksMessageCodec for VRFProof {
+    fn consensus_serialize<W: Write>(&self, fd: &mut W) -> Result<(), CodecError> {
+        fd.write_all(&self.to_bytes())
+            .map_err(CodecError::WriteError)
+    }
+
+    fn consensus_deserialize<R: Read>(fd: &mut R) -> Result<VRFProof, CodecError> {
+        let mut bytes = [0u8; VRF_PROOF_ENCODED_SIZE as usize];
+        fd.read_exact(&mut bytes).map_err(CodecError::ReadError)?;
+        let res = VRFProof::from_slice(&bytes).ok_or(CodecError::DeserializeError(
+            "Failed to parse VRF proof".to_string(),
+        ))?;
+
+        Ok(res)
+    }
+}
+
+pub const VRF_SEED_ENCODED_SIZE: u32 = 32;
+
+impl VRFSeed {
+    /// First-ever VRF seed from the genesis block.  It's all 0's
+    pub fn initial() -> VRFSeed {
+        VRFSeed::from_hex("0000000000000000000000000000000000000000000000000000000000000000")
+            .unwrap()
+    }
+
+    pub fn from_proof(proof: &VRFProof) -> VRFSeed {
+        let h = Sha512Trunc256Sum::from_data(&proof.to_bytes());
+        VRFSeed(h.0)
+    }
+
+    pub fn is_from_proof(&self, proof: &VRFProof) -> bool {
+        self.as_bytes().to_vec() == VRFSeed::from_proof(proof).as_bytes().to_vec()
     }
 }
 

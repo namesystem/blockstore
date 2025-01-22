@@ -693,9 +693,9 @@ const CHAINSTATE_INITIAL_SCHEMA: &[&str] = &[
         tx_merkle_root TEXT NOT NULL,
         state_index_root TEXT NOT NULL,
         microblock_pubkey_hash TEXT NOT NULL,
-        
+
         block_hash TEXT NOT NULL,                   -- NOTE: this is *not* unique, since two burn chain forks can commit to the same Stacks block.
-        index_block_hash TEXT UNIQUE NOT NULL,      -- NOTE: this is the hash of the block hash and consensus hash of the burn block that selected it, 
+        index_block_hash TEXT UNIQUE NOT NULL,      -- NOTE: this is the hash of the block hash and consensus hash of the burn block that selected it,
                                                     -- and is guaranteed to be globally unique (across all Stacks forks and across all PoX forks).
                                                     -- index_block_hash is the block hash fed into the MARF index.
 
@@ -730,7 +730,7 @@ const CHAINSTATE_INITIAL_SCHEMA: &[&str] = &[
         burnchain_commit_burn INT NOT NULL,
         burnchain_sortition_burn INT NOT NULL,
         miner INT NOT NULL,
-        
+
         -- internal use
         stacks_block_height INTEGER NOT NULL,
         index_block_hash TEXT NOT NULL,     -- NOTE: can't enforce UNIQUE here, because there will be multiple entries per block
@@ -831,7 +831,7 @@ const CHAINSTATE_SCHEMA_3: &[&str] = &[
     -- * one that records the coinbase, anchored tx fee, and confirmed streamed tx fees, and
     -- * one that records only the produced streamed tx fees.
     -- The latter is determined once this block's stream gets subsequently confirmed.
-    -- You query this table by passing both the parent and the child block hashes, since both the 
+    -- You query this table by passing both the parent and the child block hashes, since both the
     -- parent and child blocks determine the full reward for the parent block.
     CREATE TABLE matured_rewards(
         address TEXT NOT NULL,      -- address of the miner who produced the block
@@ -842,7 +842,7 @@ const CHAINSTATE_SCHEMA_3: &[&str] = &[
         tx_fees_streamed_confirmed TEXT NOT NULL,
         tx_fees_streamed_produced TEXT NOT NULL,
 
-        -- fork identifier 
+        -- fork identifier
         child_index_block_hash TEXT NOT NULL,
         parent_index_block_hash TEXT NOT NULL,
 
@@ -1033,7 +1033,11 @@ impl StacksChainState {
     }
 
     pub fn load_db_config(conn: &DBConn) -> Result<DBConfig, db_error> {
-        let config = query_row::<DBConfig, _>(conn, "SELECT * FROM db_config LIMIT 1", NO_PARAMS)?;
+        let config = query_row::<DBConfig, _>(
+            conn,
+            &"SELECT * FROM db_config LIMIT 1".to_string(),
+            NO_PARAMS,
+        )?;
         Ok(config.expect("BUG: no db_config installed"))
     }
 

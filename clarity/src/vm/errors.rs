@@ -15,6 +15,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::error::Error as ErrorTrait;
+use std::string::FromUtf8Error;
 use std::{error, fmt};
 
 #[cfg(feature = "canonical")]
@@ -29,7 +30,7 @@ pub use crate::vm::analysis::errors::{
 use crate::vm::ast::errors::ParseError;
 use crate::vm::contexts::StackTrace;
 use crate::vm::costs::CostErrors;
-use crate::vm::types::{TypeSignature, Value};
+use crate::vm::types::Value;
 
 #[derive(Debug)]
 pub struct IncomparableError<T> {
@@ -46,6 +47,8 @@ pub enum Error {
     Interpreter(InterpreterError),
     Runtime(RuntimeErrorType, Option<StackTrace>),
     ShortReturn(ShortReturnType),
+    #[cfg(feature = "clarity-wasm")]
+    Wasm(WasmError),
 }
 
 /// InterpreterErrors are errors that *should never* occur.
@@ -113,6 +116,81 @@ pub enum ShortReturnType {
     ExpectedValue(Value),
     AssertionFailed(Value),
 }
+
+/// WasmErrors are errors that *should never* occur.
+/// Test executions may trigger these errors, but if they show up in normal
+/// execution, it indicates a bug in the Wasm compiler or runtime.
+#[cfg(feature = "clarity-wasm")]
+#[derive(Debug)]
+pub enum WasmError {
+    WasmGeneratorError(String),
+    ModuleNotFound,
+    DefinesNotFound,
+    TopLevelNotFound,
+    MemoryNotFound,
+    GlobalNotFound(String),
+    WasmCompileFailed(wasmtime::Error),
+    UnableToLoadModule(wasmtime::Error),
+    UnableToLinkHostFunction(String, wasmtime::Error),
+    UnableToReadIdentifier(FromUtf8Error),
+    UnableToRetrieveIdentifier(i32),
+    InvalidClarityName(String),
+    UnableToWriteStackPointer(wasmtime::Error),
+    UnableToReadMemory(wasmtime::Error),
+    UnableToWriteMemory(wasmtime::Error),
+    ValueTypeMismatch,
+    InvalidNoTypeInValue,
+    InvalidListUnionTypeInValue,
+    InvalidFunctionKind(i32),
+    DefineFunctionCalledInRunMode,
+    ExpectedReturnValue,
+    InvalidIndicator(i32),
+    Runtime(wasmtime::Error),
+}
+
+#[cfg(feature = "clarity-wasm")]
+impl fmt::Display for WasmError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            WasmError::WasmGeneratorError(e) => write!(f, "Wasm generator error: {e}"),
+            WasmError::ModuleNotFound => write!(f, "Module not found"),
+            WasmError::DefinesNotFound => write!(f, "Defines function not found"),
+            WasmError::TopLevelNotFound => write!(f, "Top level function not found"),
+            WasmError::MemoryNotFound => write!(f, "Memory not found"),
+            WasmError::GlobalNotFound(e) => write!(f, "Global variable not found: {e}"),
+            WasmError::WasmCompileFailed(e) => write!(f, "Wasm compile failed: {e}"),
+            WasmError::UnableToLoadModule(e) => write!(f, "Unable to load module: {e}"),
+            WasmError::UnableToLinkHostFunction(name, e) => {
+                write!(f, "Unable to link host function {name}: {e}")
+            }
+            WasmError::UnableToReadIdentifier(e) => write!(f, "Unable to read identifier: {e}"),
+            WasmError::UnableToRetrieveIdentifier(id) => {
+                write!(f, "Unable to retrieve identifier: {id}")
+            }
+            WasmError::InvalidClarityName(name) => write!(f, "Invalid Clarity name: {name}"),
+            WasmError::UnableToWriteStackPointer(e) => {
+                write!(f, "Unable to write stack pointer: {e}")
+            }
+            WasmError::UnableToReadMemory(e) => write!(f, "Unable to read memory: {e}"),
+            WasmError::UnableToWriteMemory(e) => write!(f, "Unable to write memory: {e}"),
+            WasmError::ValueTypeMismatch => write!(f, "Value type mismatch"),
+            WasmError::InvalidNoTypeInValue => write!(f, "Invalid no type in value"),
+            WasmError::InvalidListUnionTypeInValue => write!(f, "Invalid list union type in value"),
+            WasmError::InvalidFunctionKind(kind) => write!(f, "Invalid function kind: {kind}"),
+            WasmError::DefineFunctionCalledInRunMode => {
+                write!(f, "Define function called in run mode")
+            }
+            WasmError::ExpectedReturnValue => write!(f, "Expected return value"),
+            WasmError::InvalidIndicator(indicator) => {
+                write!(f, "Invalid response/optional indicator: {indicator}")
+            }
+            WasmError::Runtime(e) => write!(f, "Runtime error: {e}"),
+        }
+    }
+}
+
+#[cfg(feature = "clarity-wasm")]
+impl std::error::Error for WasmError {}
 
 pub type InterpreterResult<R> = Result<R, Error>;
 
@@ -243,7 +321,7 @@ mod test {
     fn error_formats() {
         let t = "(/ 10 0)";
         let expected = "DivisionByZero
- Stack Trace: 
+ Stack Trace:
 _native_:native_div
 ";
 

@@ -25,6 +25,9 @@ pub mod types;
 
 pub mod contracts;
 
+#[cfg(feature = "clarity-wasm")]
+pub mod clarity_wasm;
+
 pub mod ast;
 pub mod contexts;
 pub mod database;
@@ -62,6 +65,7 @@ use self::analysis::ContractAnalysis;
 use self::ast::{ASTRules, ContractAST};
 use self::costs::ExecutionCost;
 use self::diagnostic::Diagnostic;
+use self::events::StacksTransactionEvent;
 use crate::vm::callables::CallableType;
 use crate::vm::contexts::GlobalContext;
 pub use crate::vm::contexts::{
@@ -119,12 +123,12 @@ pub enum EvaluationResult {
 #[derive(Debug, Clone)]
 pub struct ExecutionResult {
     pub result: EvaluationResult,
-    pub events: Vec<serde_json::Value>,
+    pub events: Vec<StacksTransactionEvent>,
     pub cost: Option<CostSynthesis>,
     pub diagnostics: Vec<Diagnostic>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct CostSynthesis {
     pub total: ExecutionCost,
     pub limit: ExecutionCost,
@@ -620,6 +624,7 @@ mod test {
             DefineType::Private,
             &"do_work".into(),
             "",
+            Some(TypeSignature::IntType),
         );
 
         let context = LocalContext::new();

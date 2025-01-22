@@ -237,7 +237,7 @@ pub mod pox4 {
             sim.execute_next_block_as_conn(|conn| {
                 conn.as_transaction(|clarity_db| {
                     let clarity_version = ClarityVersion::Clarity2;
-                    let (ast, analysis) = clarity_db
+                    let (mut ast, analysis) = clarity_db
                         .analyze_smart_contract(
                             &pox_contract_id,
                             clarity_version,
@@ -249,7 +249,8 @@ pub mod pox4 {
                         .initialize_smart_contract(
                             &pox_contract_id,
                             clarity_version,
-                            &ast,
+                            &mut ast,
+                            &analysis,
                             &body,
                             None,
                             |_, _| false,

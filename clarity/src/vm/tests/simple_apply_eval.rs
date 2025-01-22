@@ -73,7 +73,7 @@ fn test_simple_let(#[case] version: ClarityVersion, #[case] epoch: StacksEpochId
                              (+ z y))
                         x))";
     let contract_id = QualifiedContractIdentifier::transient();
-    let placeholder_context =
+    let mut placeholder_context =
         ContractContext::new(QualifiedContractIdentifier::transient(), version);
     if let Ok(parsed_program) = parse(&contract_id, program, version, epoch) {
         let context = LocalContext::new();
@@ -84,7 +84,7 @@ fn test_simple_let(#[case] version: ClarityVersion, #[case] epoch: StacksEpochId
             Ok(Value::Int(7)),
             eval(
                 &parsed_program[0],
-                &mut env.get_exec_environment(None, None, &placeholder_context),
+                &mut env.get_exec_environment(None, None, &mut placeholder_context),
                 &context
             )
         );
@@ -330,7 +330,7 @@ fn test_from_consensus_buff_missed_expectations() {
         ("0x0200000004deadbeef", "(string-ascii 8)"),
         ("0x03", "uint"),
         ("0x04", "(optional int)"),
-        ("0x0700ffffffffffffffffffffffffffffffff", "(response uint int)"), 
+        ("0x0700ffffffffffffffffffffffffffffffff", "(response uint int)"),
         ("0x0800ffffffffffffffffffffffffffffffff", "(response int uint)"),
         ("0x09", "(response int int)"),
         ("0x0b0000000400000000000000000000000000000000010000000000000000000000000000000002000000000000000000000000000000000300fffffffffffffffffffffffffffffffc",
@@ -365,7 +365,7 @@ fn test_to_from_consensus_buff_vectors() {
         ("0x04", "false", "bool"),
         ("0x050011deadbeef11ababffff11deadbeef11ababffff", "'S08XXBDYXW8TQAZZZW8XXBDYXW8TQAZZZZ88551S", "principal"),
         ("0x060011deadbeef11ababffff11deadbeef11ababffff0461626364", "'S08XXBDYXW8TQAZZZW8XXBDYXW8TQAZZZZ88551S.abcd", "principal"),
-        ("0x0700ffffffffffffffffffffffffffffffff", "(ok -1)", "(response int int)"), 
+        ("0x0700ffffffffffffffffffffffffffffffff", "(ok -1)", "(response int int)"),
         ("0x0800ffffffffffffffffffffffffffffffff", "(err -1)", "(response int int)"),
         ("0x09", "none", "(optional int)"),
         ("0x0a00ffffffffffffffffffffffffffffffff", "(some -1)", "(optional int)"),
@@ -671,6 +671,7 @@ fn test_simple_if_functions(#[case] version: ClarityVersion, #[case] epoch: Stac
             Private,
             &"with_else".into(),
             "",
+            Some(TypeSignature::IntType),
         );
 
         let user_function2 = DefinedFunction::new(
@@ -679,6 +680,7 @@ fn test_simple_if_functions(#[case] version: ClarityVersion, #[case] epoch: Stac
             Private,
             &"without_else".into(),
             "",
+            Some(TypeSignature::IntType),
         );
 
         let context = LocalContext::new();

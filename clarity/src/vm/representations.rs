@@ -457,13 +457,17 @@ pub struct SymbolicExpression {
     pub id: u64,
 
     #[cfg(feature = "developer-mode")]
+    #[serde(default)]
     pub span: Span,
 
     #[cfg(feature = "developer-mode")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pre_comments: Vec<(String, Span)>,
     #[cfg(feature = "developer-mode")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end_line_comment: Option<String>,
     #[cfg(feature = "developer-mode")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub post_comments: Vec<(String, Span)>,
 }
 
@@ -653,7 +657,7 @@ impl fmt::Display for SymbolicExpression {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Span {
     pub start_line: u32,
     pub start_column: u32,

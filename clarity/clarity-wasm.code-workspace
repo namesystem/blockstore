@@ -1,0 +1,12 @@
+{
+  "folders": [
+    {
+      "path": ".."
+    }
+  ],
+  "settings": {
+    "rust-analyzer.check.command": "check",
+    "rust-analyzer.check.noDefaultFeatures": true,
+    "rust-analyzer.check.features": ["clarity/wasm"]
+  }
+}

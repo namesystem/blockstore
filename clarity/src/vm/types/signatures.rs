@@ -110,10 +110,10 @@ mod tuple_type_map_serde {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct BufferLength(u32);
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StringUTF8Length(u32);
 
 // INVARIANTS enforced by the Type Signatures.
@@ -867,6 +867,51 @@ impl TypeSignature {
             }
             CallableType(CallableSubtype::Principal(_)) => Ok(TypeSignature::PrincipalType),
             _ => Ok(self.clone()),
+        }
+    }
+
+    /// Goes recursively through a type to [concretize](TypeSignature::concretize)
+    /// the inner [ListUnionType] and [CallableType] variants.
+    pub fn concretize_deep(self) -> Result<Self> {
+        match self {
+            TypeSignature::NoType
+            | TypeSignature::IntType
+            | TypeSignature::UIntType
+            | TypeSignature::BoolType
+            | TypeSignature::PrincipalType
+            | TypeSignature::SequenceType(SequenceSubtype::BufferType(_))
+            | TypeSignature::SequenceType(SequenceSubtype::StringType(_))
+            | TypeSignature::TraitReferenceType(_) => Ok(self),
+            TypeSignature::OptionalType(opt_ty) => Ok(TypeSignature::OptionalType(Box::new(
+                opt_ty.concretize_deep()?,
+            ))),
+            TypeSignature::ResponseType(resp_ty) => {
+                let (ok_ty, err_ty) = *resp_ty;
+                Ok(TypeSignature::ResponseType(Box::new((
+                    ok_ty.concretize_deep()?,
+                    err_ty.concretize_deep()?,
+                ))))
+            }
+            TypeSignature::SequenceType(SequenceSubtype::ListType(ListTypeData {
+                max_len,
+                entry_type,
+            })) => Ok(TypeSignature::SequenceType(SequenceSubtype::ListType(
+                ListTypeData {
+                    max_len,
+                    entry_type: Box::new(entry_type.concretize_deep()?),
+                },
+            ))),
+            TypeSignature::TupleType(TupleTypeSignature { type_map }) => {
+                let mut type_map_ref = type_map.as_ref().clone();
+                for ty in type_map_ref.values_mut() {
+                    *ty = ty.clone().concretize_deep()?;
+                }
+                Ok(TupleTypeSignature {
+                    type_map: Arc::new(type_map_ref),
+                }
+                .into())
+            }
+            TypeSignature::ListUnionType(_) | TypeSignature::CallableType(_) => self.concretize(),
         }
     }
 }

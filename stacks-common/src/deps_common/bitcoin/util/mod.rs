@@ -20,10 +20,9 @@ pub mod hash;
 
 use std::{error, fmt};
 
-use secp256k1;
-
 use crate::deps_common::bitcoin::network;
 use crate::deps_common::bitcoin::network::serialize;
+use crate::util::secp256k1::Error as Secp256k1Error;
 
 /// A trait which allows numbers to act as fixed-size bit arrays
 pub trait BitArray {
@@ -51,7 +50,7 @@ pub trait BitArray {
 #[derive(Debug)]
 pub enum Error {
     /// secp-related error
-    Secp256k1(secp256k1::Error),
+    Secp256k1(Secp256k1Error),
     /// Serialization error
     Serialize(serialize::Error),
     /// Network error
@@ -86,8 +85,8 @@ impl error::Error for Error {
 }
 
 #[doc(hidden)]
-impl From<secp256k1::Error> for Error {
-    fn from(e: secp256k1::Error) -> Error {
+impl From<Secp256k1Error> for Error {
+    fn from(e: Secp256k1Error) -> Error {
         Error::Secp256k1(e)
     }
 }

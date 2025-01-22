@@ -19,13 +19,15 @@ name = "pox_locking"
 path = "src/lib.rs"
 
 [dependencies]
-clarity = { package = "clarity", path = "../clarity" }
-stacks_common = { package = "stacks-common", path = "../stacks-common" }
+clarity = { path = "../clarity", default-features = false, optional = true }
+stacks-common = { path = "../stacks-common", default-features = false, optional = true  }
 slog = { version = "2.5.2", features = [ "max_level_trace" ] }
 
 [dev-dependencies]
 mutants = "0.0.3"
 
 [features]
-slog_json = ["stacks_common/slog_json", "clarity/slog_json"]
+default = ["stacks-common/default", "clarity/default"]
+slog_json = ["stacks-common/slog_json", "clarity/slog_json"]
+wasm = ["stacks-common/wasm", "clarity/wasm"]
 testing = []

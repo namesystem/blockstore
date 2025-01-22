@@ -12,8 +12,9 @@ pico-args = "0.5.0"
 serde = "1"
 serde_derive = "1"
 serde_json = { version = "1.0", features = ["arbitrary_precision", "raw_value"] }
-stacks = { package = "stackslib", path = "../../stackslib" }
-stx-genesis = { path = "../../stx-genesis"}
+stacks = { path = "../../stackslib", package = "stackslib" }
+stx-genesis = { path = "../../stx-genesis" }
+toml = "0.5.6"
 base64 = "0.12.0"
 backtrace = "0.3.50"
 libc = "0.2.151"
@@ -27,7 +28,6 @@ url = "2.1.0"
 rand = { workspace = true }
 rand_core = { workspace = true }
 hashbrown = { workspace = true }
-rusqlite = { workspace = true }
 async-h1 = { version = "2.3.2", optional = true }
 async-std = { version = "1.6", optional = true, features = ["attributes"] }
 http-types = { version = "2.12", optional = true }
@@ -42,7 +42,7 @@ tokio = "1.15"
 reqwest = { version = "0.11", default-features = false, features = ["blocking", "json", "rustls", "rustls-tls"] }
 clarity = { path = "../../clarity", features = ["default", "testing"]}
 stacks-common = { path = "../../stacks-common", features = ["default", "testing"] }
-stacks = { package = "stackslib", path = "../../stackslib", features = ["default", "testing"] }
+stacks = { path = "../../stackslib", package = "stackslib", features = ["default", "testing"] }
 stacks-signer = { path = "../../stacks-signer", features = ["testing"] }
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
@@ -51,6 +51,11 @@ tiny_http = "0.12.0"
 http-types = "2.12"
 tempfile = "3.3"
 mockito = "1.5"
+
+[dependencies.rusqlite]
+workspace = true
+features = ["blob", "serde_json", "i128_blob", "bundled", "trace"]
+optional = true
 
 [[bin]]
 name = "stacks-node"
@@ -66,3 +71,4 @@ slog_json = ["stacks/slog_json", "stacks-common/slog_json", "clarity/slog_json"]
 prod-genesis-chainstate = []
 default = []
 testing = []
+wasm = ["stacks-common/wasm"]

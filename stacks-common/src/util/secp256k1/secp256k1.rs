@@ -13,24 +13,25 @@
 //
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
-use rand::{thread_rng, RngCore};
-use secp256k1;
-use secp256k1::ecdsa::{
+
+use ::secp256k1;
+use ::secp256k1::ecdsa::{
     RecoverableSignature as LibSecp256k1RecoverableSignature, RecoveryId as LibSecp256k1RecoveryID,
     Signature as LibSecp256k1Signature,
 };
-use secp256k1::{
+pub use ::secp256k1::Error;
+use ::secp256k1::{
     constants as LibSecp256k1Constants, Error as LibSecp256k1Error, Message as LibSecp256k1Message,
     PublicKey as LibSecp256k1PublicKey, Secp256k1, SecretKey as LibSecp256k1PrivateKey,
 };
+use rand::{thread_rng, RngCore};
 use serde::de::{Deserialize, Error as de_Error};
 use serde::ser::Error as ser_Error;
 use serde::Serialize;
 
-use super::hash::Sha256Sum;
-use crate::impl_byte_array_message_codec;
+use super::MessageSignature;
 use crate::types::{PrivateKey, PublicKey};
-use crate::util::hash::{hex_bytes, to_hex};
+use crate::util::hash::{hex_bytes, to_hex, Sha256Sum};
 
 // per-thread Secp256k1 context
 thread_local!(static _secp256k1: Secp256k1<secp256k1::All> = Secp256k1::new());
@@ -56,13 +57,6 @@ pub struct Secp256k1PrivateKey {
     key: LibSecp256k1PrivateKey,
     compress_public: bool,
 }
-
-pub struct MessageSignature(pub [u8; 65]);
-impl_array_newtype!(MessageSignature, u8, 65);
-impl_array_hexstring_fmt!(MessageSignature);
-impl_byte_array_newtype!(MessageSignature, u8, 65);
-impl_byte_array_serde!(MessageSignature);
-pub const MESSAGE_SIGNATURE_ENCODED_SIZE: u32 = 65;
 
 impl MessageSignature {
     pub fn empty() -> MessageSignature {

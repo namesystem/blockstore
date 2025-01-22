@@ -1,14 +1,16 @@
 [package]
 name = "stacks-common"
-version = "0.0.1"
-authors = [ "Jude Nelson <jude@stacks.org>",
-            "Aaron Blankstein <aaron@blockstack.com>",
-            "Ludo Galabru <ludovic@blockstack.com>" ]
-license = "GPLv3"
+version = "0.0.2"
+authors = [
+  "Jude Nelson <jude@stacks.org>",
+  "Aaron Blankstein <aaron@blockstack.com>",
+  "Ludo Galabru <ludovic@blockstack.com>",
+]
+license = "GPL-3.0-only"
 homepage = "https://github.com/blockstack/stacks-blockchain"
 repository = "https://github.com/blockstack/stacks-blockchain"
-description = "Common modules for blockstack_lib, libclarity"
-keywords = [ "stacks", "stx", "bitcoin", "crypto", "blockstack", "decentralized", "dapps", "blockchain" ]
+description = "Common modules for stackslib, libclarity"
+keywords = ["stacks", "stx", "bitcoin", "crypto", "blockchain"]
 readme = "README.md"
 resolver = "2"
 edition = "2021"
@@ -22,21 +24,31 @@ rand = { workspace = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_derive = "1"
 sha3 = "0.10.1"
+sha2 = "0.10"
 ripemd = "0.1.1"
 lazy_static = "1.4.0"
-slog = { version = "2.5.2", features = [ "max_level_trace" ] }
-slog-term = "2.6.0"
+percent-encoding = "2.1.0"
+slog = { version = "2.5.2", features = ["max_level_trace"], optional = true }
+slog-term = { version = "2.6.0", optional = true }
 slog-json = { version = "2.3.0", optional = true }
 chrono = "0.4.19"
 libc = "0.2.82"
 hashbrown = { workspace = true }
-rusqlite = { workspace = true, optional = true }
+
+# wasm
+libsecp256k1 = { version = "0.5.0", optional = true }
+getrandom = { version = "0.2", features = ["js"], optional = true}
 
 [target.'cfg(unix)'.dependencies]
 nix = "0.23"
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["consoleapi", "handleapi", "synchapi", "winbase"] }
+winapi = { version = "0.3", features = [
+  "consoleapi",
+  "handleapi",
+  "synchapi",
+  "winbase",
+] }
 
 [target.'cfg(windows)'.dev-dependencies]
 winapi = { version = "0.3", features = ["fileapi", "processenv", "winnt"] }
@@ -48,24 +60,36 @@ features = ["arbitrary_precision", "unbounded_depth"]
 [dependencies.secp256k1]
 version = "0.24.3"
 features = ["serde", "recovery"]
+optional = true
+
+[dependencies.rusqlite]
+workspace = true
+features = ["blob", "serde_json", "i128_blob", "bundled", "trace"]
+optional = true
 
 [dependencies.ed25519-dalek]
 workspace = true
+features = ["serde"]
+optional = true
 
 [dependencies.curve25519-dalek]
 version = "=2.0.0"
 features = ["serde"]
+optional = true
 
 [dependencies.time]
-version = "0.2.23"
+version = "0.3.34"
 features = ["std"]
 
 [dev-dependencies]
 rand_core = { workspace = true }
 
 [features]
-default = ["canonical", "developer-mode"]
-canonical = ["rusqlite"]
+default = ["canonical", "log", "developer-mode"]
+canonical = ["rusqlite", "vrf", "secp256k1"]
+log = ["slog", "slog-term", "slog-json"]
+vrf = ["ed25519-dalek", "curve25519-dalek"]
+wasm = ["libsecp256k1", "developer-mode", "getrandom"]
 developer-mode = []
 slog_json = ["slog-json"]
 testing = ["canonical"]

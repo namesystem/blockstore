@@ -21,8 +21,6 @@ use std::io;
 use std::io::{Read, Write};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError, TrySendError};
 
-use crate::util::log;
-
 /// Inter-thread pipe for streaming messages, built on channels.
 /// Used mainly in conjunction with networking.
 ///

@@ -9,6 +9,8 @@ use crate::vm::contexts::{AssetMap, Environment, OwnedEnvironment};
 use crate::vm::costs::{ExecutionCost, LimitedCostTracker};
 use crate::vm::database::ClarityDatabase;
 use crate::vm::errors::Error as InterpreterError;
+#[cfg(feature = "clarity-wasm")]
+use crate::vm::errors::WasmError;
 use crate::vm::events::StacksTransactionEvent;
 use crate::vm::types::{BuffData, PrincipalData, QualifiedContractIdentifier};
 use crate::vm::{analysis, ast, ClarityVersion, ContractContext, SymbolicExpression, Value};
@@ -18,6 +20,8 @@ pub enum Error {
     Analysis(CheckError),
     Parse(ParseError),
     Interpreter(InterpreterError),
+    #[cfg(feature = "clarity-wasm")]
+    Wasm(WasmError),
     BadTransaction(String),
     CostError(ExecutionCost, ExecutionCost),
     AbortedByCallback(Option<Value>, AssetMap, Vec<StacksTransactionEvent>),
@@ -34,6 +38,8 @@ impl fmt::Display for Error {
             Error::AbortedByCallback(..) => write!(f, "Post condition aborted transaction"),
             Error::Interpreter(ref e) => fmt::Display::fmt(e, f),
             Error::BadTransaction(ref s) => fmt::Display::fmt(s, f),
+            #[cfg(feature = "clarity-wasm")]
+            Error::Wasm(ref e) => fmt::Display::fmt(e, f),
         }
     }
 }
@@ -47,6 +53,8 @@ impl std::error::Error for Error {
             Error::Parse(ref e) => Some(e),
             Error::Interpreter(ref e) => Some(e),
             Error::BadTransaction(ref _s) => None,
+            #[cfg(feature = "clarity-wasm")]
+            Error::Wasm(ref e) => Some(e),
         }
     }
 }
@@ -214,7 +222,7 @@ pub trait TransactionConnection: ClarityConnection {
                 cost_track,
                 epoch_id,
                 clarity_version,
-                false,
+                true,
             );
 
             match result {
@@ -333,7 +341,8 @@ pub trait TransactionConnection: ClarityConnection {
         &mut self,
         identifier: &QualifiedContractIdentifier,
         clarity_version: ClarityVersion,
-        contract_ast: &ContractAST,
+        contract_ast: &mut ContractAST,
+        contract_analysis: &ContractAnalysis,
         contract_str: &str,
         sponsor: Option<PrincipalData>,
         abort_call_back: F,
@@ -348,6 +357,7 @@ pub trait TransactionConnection: ClarityConnection {
                         identifier.clone(),
                         clarity_version,
                         contract_ast,
+                        contract_analysis,
                         contract_str,
                         sponsor,
                     )

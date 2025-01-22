@@ -2,7 +2,6 @@ use std::fmt::{self, Display};
 use std::io::{Read, Write};
 use std::str::FromStr;
 
-use curve25519_dalek::digest::Digest;
 use rand::{Rng, SeedableRng};
 use serde::de::{Deserialize, Error as de_Error};
 use serde::ser::Error as ser_Error;
@@ -15,7 +14,6 @@ use crate::deps_common::bitcoin::util::hash::Sha256dHash;
 use crate::util::hash::{to_hex, DoubleSha256, Hash160, Sha512Trunc256Sum, HASH160_ENCODED_SIZE};
 use crate::util::secp256k1::{MessageSignature, Secp256k1PrivateKey, Secp256k1PublicKey};
 use crate::util::uint::Uint256;
-use crate::util::vrf::{VRFProof, VRF_PROOF_ENCODED_SIZE};
 
 pub type StacksPublicKey = Secp256k1PublicKey;
 pub type StacksPrivateKey = Secp256k1PrivateKey;
@@ -109,6 +107,7 @@ impl_byte_array_newtype!(BlockHeaderHash, u8, 32);
 impl_byte_array_serde!(BlockHeaderHash);
 pub const BLOCK_HEADER_HASH_ENCODED_SIZE: usize = 32;
 
+#[cfg(feature = "log")]
 impl slog::Value for BlockHeaderHash {
     fn serialize(
         &self,
@@ -135,7 +134,6 @@ impl_array_newtype!(VRFSeed, u8, 32);
 impl_array_hexstring_fmt!(VRFSeed);
 impl_byte_array_newtype!(VRFSeed, u8, 32);
 impl_byte_array_serde!(VRFSeed);
-pub const VRF_SEED_ENCODED_SIZE: u32 = 32;
 
 /// Identifier used to identify Proof-of-Transfer forks
 ///  (or Rewards Cycle forks). These identifiers are opaque
@@ -364,23 +362,6 @@ impl StacksWorkScore {
     }
 }
 
-impl StacksMessageCodec for VRFProof {
-    fn consensus_serialize<W: Write>(&self, fd: &mut W) -> Result<(), CodecError> {
-        fd.write_all(&self.to_bytes())
-            .map_err(CodecError::WriteError)
-    }
-
-    fn consensus_deserialize<R: Read>(fd: &mut R) -> Result<VRFProof, CodecError> {
-        let mut bytes = [0u8; VRF_PROOF_ENCODED_SIZE as usize];
-        fd.read_exact(&mut bytes).map_err(CodecError::ReadError)?;
-        let res = VRFProof::from_slice(&bytes).ok_or(CodecError::DeserializeError(
-            "Failed to parse VRF proof".to_string(),
-        ))?;
-
-        Ok(res)
-    }
-}
-
 impl StacksMessageCodec for StacksWorkScore {
     fn consensus_serialize<W: Write>(&self, fd: &mut W) -> Result<(), CodecError> {
         write_next(fd, &self.burn)?;
@@ -458,23 +439,6 @@ impl BurnchainHeaderHash {
         bytes.extend_from_slice(&noise.to_be_bytes());
         let h = DoubleSha256::from_data(&bytes[..]);
         BurnchainHeaderHash(h.to_bytes())
-    }
-}
-
-impl VRFSeed {
-    /// First-ever VRF seed from the genesis block.  It's all 0's
-    pub fn initial() -> VRFSeed {
-        VRFSeed::from_hex("0000000000000000000000000000000000000000000000000000000000000000")
-            .unwrap()
-    }
-
-    pub fn from_proof(proof: &VRFProof) -> VRFSeed {
-        let h = Sha512Trunc256Sum::from_data(&proof.to_bytes());
-        VRFSeed(h.0)
-    }
-
-    pub fn is_from_proof(&self, proof: &VRFProof) -> bool {
-        self.as_bytes().to_vec() == VRFSeed::from_proof(proof).as_bytes().to_vec()
     }
 }
 

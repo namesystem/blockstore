@@ -29,6 +29,16 @@ jobs:
         dist:
           - debian
     steps:
+      ## Increase swapfile
+      - name: Increase swapfile
+        run: |
+          sudo swapoff -a
+          sudo fallocate -l 15G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          sudo swapon --show
+
       ## Setup Docker for the builds
       - name: Docker setup
         id: docker_setup

@@ -6,8 +6,8 @@ use std::sync::Mutex;
 use clarity::vm::analysis::contract_interface_builder::{
     build_contract_interface, ContractInterface,
 };
-use clarity::vm::analysis::mem_type_check;
 use clarity::vm::costs::ExecutionCost;
+use clarity::vm::tooling::mem_type_check;
 use clarity::vm::types::{
     QualifiedContractIdentifier, ResponseData, StacksAddressExtensions, TupleData,
 };

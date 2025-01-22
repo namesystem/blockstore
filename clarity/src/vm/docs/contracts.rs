@@ -17,17 +17,17 @@ use crate::vm::types::{FunctionType, QualifiedContractIdentifier, Value};
 use crate::vm::version::ClarityVersion;
 use crate::vm::{self, ContractContext};
 
-const DOCS_GENERATION_EPOCH: StacksEpochId = StacksEpochId::Epoch2_05;
+pub const DOCS_GENERATION_EPOCH: StacksEpochId = StacksEpochId::Epoch2_05;
 
 #[derive(Serialize)]
 pub struct ContractRef {
-    public_functions: Vec<FunctionRef>,
-    read_only_functions: Vec<FunctionRef>,
-    error_codes: Vec<ErrorCode>,
+    pub public_functions: Vec<FunctionRef>,
+    pub read_only_functions: Vec<FunctionRef>,
+    pub error_codes: Vec<ErrorCode>,
 }
 
 #[derive(Serialize)]
-struct FunctionRef {
+pub struct FunctionRef {
     name: String,
     input_type: String,
     output_type: String,
@@ -36,11 +36,11 @@ struct FunctionRef {
 }
 
 #[derive(Serialize)]
-struct ErrorCode {
-    name: String,
+pub struct ErrorCode {
+    pub name: String,
     #[serde(rename = "type")]
-    value_type: String,
-    value: String,
+    pub value_type: String,
+    pub value: String,
 }
 
 pub struct ContractSupportDocs {
@@ -49,7 +49,7 @@ pub struct ContractSupportDocs {
 }
 
 #[allow(clippy::expect_used)]
-fn make_func_ref(func_name: &str, func_type: &FunctionType, description: &str) -> FunctionRef {
+pub fn make_func_ref(func_name: &str, func_type: &FunctionType, description: &str) -> FunctionRef {
     let input_type = get_input_type_string(func_type);
     let output_type = get_output_type_string(func_type);
     let signature = get_signature(func_name, func_type)

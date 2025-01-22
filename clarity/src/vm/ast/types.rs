@@ -36,6 +36,7 @@ pub struct ContractAST {
     pub top_level_expression_sorting: Option<Vec<usize>>,
     pub referenced_traits: HashMap<ClarityName, TraitDefinition>,
     pub implemented_traits: HashSet<TraitIdentifier>,
+    pub wasm_module: Option<Vec<u8>>,
 }
 
 impl ContractAST {
@@ -50,6 +51,7 @@ impl ContractAST {
             top_level_expression_sorting: Some(Vec::new()),
             referenced_traits: HashMap::new(),
             implemented_traits: HashSet::new(),
+            wasm_module: None,
         }
     }
 

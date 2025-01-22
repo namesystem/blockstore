@@ -33,7 +33,7 @@ const FIRST_CLASS_TOKENS: &str = "(define-fungible-token stackaroos)
          (define-read-only (my-ft-get-balance (account principal))
             (ft-get-balance stackaroos account))
          (define-read-only (get-total-supply)
-            (ft-get-supply stackaroos)) 
+            (ft-get-supply stackaroos))
          (define-public (my-token-transfer (to principal) (amount uint))
             (ft-transfer? stackaroos amount tx-sender to))
          (define-public (faucet)
@@ -98,7 +98,7 @@ const ASSET_NAMES: &str =
                     (unwrap! token-to-contract-result token-to-contract-result)
                     (unwrap! contract-to-burn-result contract-to-burn-result)
                     (ok 0))))
-         (define-public (register 
+         (define-public (register
                         (recipient-principal principal)
                         (name int)
                         (salt int))
@@ -1006,7 +1006,7 @@ fn test_simple_naming_system(
         _ => panic!(),
     };
 
-    let placeholder_context =
+    let mut placeholder_context =
         ContractContext::new(QualifiedContractIdentifier::transient(), version);
 
     let tokens_contract_id =
@@ -1107,7 +1107,7 @@ fn test_simple_naming_system(
     assert!(is_committed(&result));
 
     {
-        let mut env = owned_env.get_exec_environment(None, None, &placeholder_context);
+        let mut env = owned_env.get_exec_environment(None, None, &mut placeholder_context);
         assert_eq!(
             env.eval_read_only(&names_contract_id.clone(), "(nft-get-owner? names 1)")
                 .unwrap(),
@@ -1378,7 +1378,7 @@ fn test_simple_naming_system(
     assert_eq!(asset_map.to_table().len(), 0);
 
     {
-        let mut env = owned_env.get_exec_environment(None, None, &placeholder_context);
+        let mut env = owned_env.get_exec_environment(None, None, &mut placeholder_context);
         assert_eq!(
             env.eval_read_only(&names_contract_id.clone(), "(nft-get-owner? names 5)")
                 .unwrap(),

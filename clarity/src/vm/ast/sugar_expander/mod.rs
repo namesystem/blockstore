@@ -86,8 +86,18 @@ impl SugarExpander {
                     let expression = self.transform(drain, contract_ast)?;
                     let mut pairs = expression
                         .chunks(2)
-                        .map(|pair| pair.to_vec())
-                        .map(SymbolicExpression::list)
+                        .map(|pair| {
+                            let mut l = SymbolicExpression::list(pair.to_vec());
+                            if let (Some(first), Some(last)) = (pair.first(), pair.last()) {
+                                l.set_span(
+                                    first.span().start_line,
+                                    first.span().start_column,
+                                    last.span().end_line,
+                                    last.span().end_column,
+                                )
+                            }
+                            l
+                        })
                         .collect::<Vec<_>>();
                     pairs.insert(
                         0,
@@ -131,14 +141,14 @@ impl SugarExpander {
                 PreSymbolicExpressionType::Comment(comment) => {
                     if let Some(last_expr) = expressions.last_mut() {
                         // If this comment is on the same line as the last expression attach it
-                        if last_expr.span.end_line == pre_expr.span.start_line {
+                        if last_expr.span().end_line == span.start_line {
                             last_expr.end_line_comment = Some(comment);
                         } else {
                             // Else, attach it to the next expression
-                            comments.push((comment, pre_expr.span));
+                            comments.push((comment, span));
                         }
                     } else {
-                        comments.push((comment, pre_expr.span));
+                        comments.push((comment, span));
                     }
                     continue;
                 }

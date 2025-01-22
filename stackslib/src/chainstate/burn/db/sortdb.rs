@@ -30,7 +30,6 @@ use rand::RngCore;
 use rusqlite::types::ToSql;
 use rusqlite::{
     params, Connection, Error as sqlite_error, OpenFlags, OptionalExtension, Row, Transaction,
-    TransactionBehavior,
 };
 use sha2::{Digest, Sha512_256};
 use stacks_common::address::AddressHashMode;

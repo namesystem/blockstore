@@ -12,7 +12,9 @@ RUN rustup component add llvm-tools-preview && \
 ENV RUSTFLAGS="-Cinstrument-coverage" \
     LLVM_PROFILE_FILE="stacks-blockchain-%p-%m.profraw"
 
-RUN apt-get -y install libllvm16 libclang1-16
+RUN apt-get update && \
+    apt-get -y install libllvm16 libclang1-16
+
 
 RUN cargo test --no-run && \
     cargo build

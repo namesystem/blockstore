@@ -36,7 +36,7 @@ fn test_block_height(
 ) {
     let contract = "(define-read-only (test-func) block-height)";
 
-    let placeholder_context =
+    let mut placeholder_context =
         ContractContext::new(QualifiedContractIdentifier::transient(), version);
 
     let mut owned_env = tl_env_factory.get_env(epoch);
@@ -70,7 +70,7 @@ fn test_block_height(
         ASTRules::PrecheckSize,
     );
 
-    let mut env = owned_env.get_exec_environment(None, None, &placeholder_context);
+    let mut env = owned_env.get_exec_environment(None, None, &mut placeholder_context);
 
     // Call the function
     let eval_result = env.eval_read_only(&contract_identifier, "(test-func)");
@@ -94,7 +94,7 @@ fn test_stacks_block_height(
 ) {
     let contract = "(define-read-only (test-func) stacks-block-height)";
 
-    let placeholder_context =
+    let mut placeholder_context =
         ContractContext::new(QualifiedContractIdentifier::transient(), version);
 
     let mut owned_env = tl_env_factory.get_env(epoch);
@@ -128,7 +128,7 @@ fn test_stacks_block_height(
         ASTRules::PrecheckSize,
     );
 
-    let mut env = owned_env.get_exec_environment(None, None, &placeholder_context);
+    let mut env = owned_env.get_exec_environment(None, None, &mut placeholder_context);
 
     // Call the function
     let eval_result = env.eval_read_only(&contract_identifier, "(test-func)");
@@ -154,7 +154,7 @@ fn test_tenure_height(
 ) {
     let contract = "(define-read-only (test-func) tenure-height)";
 
-    let placeholder_context =
+    let mut placeholder_context =
         ContractContext::new(QualifiedContractIdentifier::transient(), version);
 
     let mut owned_env = tl_env_factory.get_env(epoch);
@@ -188,7 +188,7 @@ fn test_tenure_height(
         ASTRules::PrecheckSize,
     );
 
-    let mut env = owned_env.get_exec_environment(None, None, &placeholder_context);
+    let mut env = owned_env.get_exec_environment(None, None, &mut placeholder_context);
 
     // Call the function
     let eval_result = env.eval_read_only(&contract_identifier, "(test-func)");
@@ -227,7 +227,7 @@ fn expect_contract_error(
     )],
     expected_success: Value,
 ) {
-    let placeholder_context =
+    let mut placeholder_context =
         ContractContext::new(QualifiedContractIdentifier::local(name).unwrap(), version);
 
     let mut owned_env = tl_env_factory.get_env(epoch);
@@ -281,7 +281,7 @@ fn expect_contract_error(
         }
     }
 
-    let mut env = owned_env.get_exec_environment(None, None, &placeholder_context);
+    let mut env = owned_env.get_exec_environment(None, None, &mut placeholder_context);
 
     // Call the function
     let eval_result = env.eval_read_only(&contract_identifier, "(test-func)");

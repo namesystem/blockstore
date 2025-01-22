@@ -1082,6 +1082,35 @@ impl Value {
         ))))
     }
 
+    pub fn string_utf8_from_unicode_scalars(scalars: Vec<u8>) -> Result<Value> {
+        let chars_result: Result<Vec<char>> = scalars
+            .chunks(4)
+            .map(|chunk| {
+                if chunk.len() == 4 {
+                    let value = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                    std::char::from_u32(value).ok_or(CheckErrors::InvalidCharactersDetected.into())
+                } else {
+                    Err(CheckErrors::InvalidCharactersDetected.into())
+                }
+            })
+            .collect();
+
+        let validated_utf8_str: String = chars_result?.into_iter().collect();
+
+        let mut data = vec![];
+        for char in validated_utf8_str.chars() {
+            let mut encoded_char: Vec<u8> = vec![0; char.len_utf8()];
+            char.encode_utf8(&mut encoded_char[..]);
+            data.push(encoded_char);
+        }
+        // check the string size
+        StringUTF8Length::try_from(data.len())?;
+
+        Ok(Value::Sequence(SequenceData::String(CharType::UTF8(
+            UTF8Data { data },
+        ))))
+    }
+
     pub fn expect_ascii(self) -> Result<String> {
         if let Value::Sequence(SequenceData::String(CharType::ASCII(ASCIIData { data }))) = self {
             Ok(String::from_utf8(data)

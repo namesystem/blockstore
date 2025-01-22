@@ -76,7 +76,7 @@ const STACKER_DB_SCHEMA: &[&str] = &[
         data BLOB NOT NULL,
         -- UNIX timestamp when the chunk was written.
         write_time INTEGER NOT NULL,
-        
+
         PRIMARY KEY(stackerdb_id,slot_id),
         FOREIGN KEY(stackerdb_id) REFERENCES databases(stackerdb_id) ON DELETE CASCADE
     );

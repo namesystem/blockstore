@@ -267,7 +267,7 @@ CREATE TABLE block_commit_metadata (
     block_height INTEGER NOT NULL,
     -- index into the list of transactions in this block at which this block-commit can be found
     vtxindex INTEGER NOT NULL,
-    
+
     -- ID of this block-commit's affirmation map
     affirmation_id INTEGER NOT NULL,
     -- if not NULL, this block-commit is an anchor block, and this value is the reward cycle for which it is an anchor block

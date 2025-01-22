@@ -1205,7 +1205,7 @@ impl PeerDB {
         peer_addr: &PeerAddress,
         peer_port: u16,
     ) -> Result<(), db_error> {
-        tx.execute("UPDATE frontier SET initial = 1 WHERE network_id = ?1 AND addrbytes = ?2 AND port = ?3", 
+        tx.execute("UPDATE frontier SET initial = 1 WHERE network_id = ?1 AND addrbytes = ?2 AND port = ?3",
                     params![network_id, peer_addr.to_bin(), peer_port])
             .map_err(db_error::SqliteError)?;
 

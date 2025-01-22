@@ -36,10 +36,9 @@ rand_core = { workspace = true }
 rand_chacha = { workspace = true }
 serde = "1"
 serde_derive = "1"
-serde_stacker = "0.1"
 sha3 = "0.10.1"
 ripemd = "0.1.1"
-regex = "1"
+regex = "1.9.3"
 mio = "0.6"
 lazy_static = "1.4.0"
 url = "2.1.0"
@@ -57,8 +56,8 @@ pox-locking = { path = "../pox-locking" }
 libstackerdb = { path = "../libstackerdb" }
 siphasher = "0.3.7"
 hashbrown = { workspace = true }
-rusqlite = { workspace = true }
 toml = { workspace = true }
+clar2wasm = { git = "https://github.com/stacks-network/clarity-wasm.git", branch = "main"}
 
 [target.'cfg(not(any(target_os = "macos",target_os="windows", target_arch = "arm" )))'.dependencies]
 tikv-jemallocator = {workspace = true}
@@ -80,6 +79,10 @@ features = ["arbitrary_precision", "unbounded_depth"]
 version = "0.24.3"
 features = ["serde", "recovery"]
 
+[dependencies.rusqlite]
+workspace = true
+features = ["blob", "serde_json", "i128_blob", "bundled", "trace"]
+
 [dependencies.ed25519-dalek]
 workspace = true
 
@@ -88,15 +91,15 @@ version = "=2.0.0"
 features = ["serde"]
 
 [dependencies.time]
-version = "0.2.23"
+version = "0.3.34"
 features = ["std"]
 
 [dev-dependencies]
 assert-json-diff = "1.0.0"
 stdext = "0.3.1"
-stx-genesis = { path = "../stx-genesis"}
-clarity = { features = ["default", "testing"], path = "../clarity" }
-stacks-common = { features = ["default", "testing"], path = "../stacks-common" }
+stx-genesis = { path = "../stx-genesis" }
+clarity = { path = "../clarity", features = ["default", "testing"] }
+stacks-common = { path = "../stacks-common", features = ["default", "testing"] }
 rstest = "0.17.0"
 rstest_reuse = "0.5.0"
 mutants = "0.0.3"

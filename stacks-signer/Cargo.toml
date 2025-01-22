@@ -24,9 +24,9 @@ backoff = "0.4"
 clarity = { path = "../clarity" }
 clap = { version = "4.1.1", features = ["derive", "env"] }
 hashbrown = { workspace = true }
-lazy_static = "1.4.0"
 libsigner = { path = "../libsigner" }
 libstackerdb = { path = "../libstackerdb" }
+lazy_static = "1.4.0"
 prometheus = { version = "0.9", optional = true }
 rand_core = "0.6"
 reqwest = { version = "0.11.22", default-features = false, features = ["blocking", "json", "rustls-tls"] }
@@ -45,12 +45,17 @@ tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 rand = { workspace = true }
 url = "2.1.0"
-rusqlite = { workspace = true, features = ["functions"] }
 
 [dev-dependencies]
 clarity = { path = "../clarity", features = ["testing"] }
+serial_test = "3.0.0"
+polynomial = "0.2.6"
 stacks-common = { path = "../stacks-common", features = ["testing"] }
 num-traits = "0.2.18"
+
+[dependencies.rusqlite]
+workspace = true
+features = ["blob", "serde_json", "i128_blob", "bundled", "trace", "functions"]
 
 [dependencies.serde_json]
 version = "1.0"

@@ -20,6 +20,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::{fmt, fs, io};
 
+use clar2wasm::compile_contract;
 use clarity::vm::analysis::run_analysis;
 use clarity::vm::analysis::types::ContractAnalysis;
 use clarity::vm::ast::errors::ParseErrors;
@@ -30,7 +31,8 @@ use clarity::vm::contracts::Contract;
 use clarity::vm::costs::cost_functions::ClarityCostFunction;
 use clarity::vm::costs::{cost_functions, runtime_cost, CostTracker, ExecutionCost};
 use clarity::vm::database::{ClarityBackingStore, ClarityDatabase};
-use clarity::vm::errors::Error as InterpreterError;
+use clarity::vm::diagnostic::DiagnosableError;
+use clarity::vm::errors::{Error as InterpreterError, WasmError};
 use clarity::vm::representations::{ClarityName, ContractName};
 use clarity::vm::types::serialization::SerializationError as ClaritySerializationError;
 use clarity::vm::types::{
@@ -1191,7 +1193,7 @@ impl StacksChainState {
                     &contract_code_str,
                     ast_rules,
                 );
-                let (contract_ast, contract_analysis) = match analysis_resp {
+                let (mut contract_ast, contract_analysis) = match analysis_resp {
                     Ok(x) => x,
                     Err(e) => {
                         match e {
@@ -1262,12 +1264,26 @@ impl StacksChainState {
                     .expect("BUG: total block cost decreased");
                 let sponsor = tx.sponsor_address().map(|a| a.to_account_principal());
 
+                // Beginning in epoch 3.0, smart contracts are compiled to Wasm
+                // and executed using the Wasm runtime.
+                debug!("Before Epoch 3.0 check");
+                if epoch_id >= StacksEpochId::Epoch30 {
+                    debug!("Compiling the contract to wasm binary");
+                    let mut module = compile_contract(contract_analysis.clone()).map_err(|e| {
+                        Error::ClarityError(clarity_error::Wasm(WasmError::WasmGeneratorError(
+                            e.message(),
+                        )))
+                    })?;
+                    contract_ast.wasm_module = Some(module.emit_wasm());
+                }
+
                 // execution -- if this fails due to a runtime error, then the transaction is still
                 // accepted, but the contract does not materialize (but the sender is out their fee).
                 let initialize_resp = clarity_tx.initialize_smart_contract(
                     &contract_id,
                     clarity_version,
-                    &contract_ast,
+                    &mut contract_ast,
+                    &contract_analysis,
                     &contract_code_str,
                     sponsor,
                     |asset_map, _| {

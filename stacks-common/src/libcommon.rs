@@ -7,6 +7,7 @@
 #![cfg_attr(test, allow(unused_variables, unused_assignments))]
 #![allow(clippy::assertions_on_constants)]
 
+#[cfg(feature = "log")]
 #[macro_use(o, slog_log, slog_trace, slog_debug, slog_info, slog_warn, slog_error)]
 extern crate slog;
 
@@ -31,6 +32,7 @@ pub mod address;
 
 pub mod deps_common;
 
+#[cfg(not(feature = "wasm"))]
 pub mod bitvec;
 
 use crate::types::chainstate::{BlockHeaderHash, BurnchainHeaderHash, SortitionId, StacksBlockId};
