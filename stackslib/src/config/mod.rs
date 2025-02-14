@@ -107,7 +107,7 @@ const DEFAULT_FIRST_REJECTION_PAUSE_MS: u64 = 5_000;
 const DEFAULT_SUBSEQUENT_REJECTION_PAUSE_MS: u64 = 10_000;
 /// Default time in milliseconds to wait for a Nakamoto block after seeing a
 /// burnchain block before submitting a block commit.
-const DEFAULT_BLOCK_COMMIT_DELAY_MS: u64 = 20_000;
+const DEFAULT_BLOCK_COMMIT_DELAY_MS: u64 = 40_000;
 /// Default percentage of the remaining tenure cost limit to consume each block
 const DEFAULT_TENURE_COST_LIMIT_PER_BLOCK_PERCENTAGE: u8 = 25;
 /// Default number of seconds to wait in-between polling the sortition DB to

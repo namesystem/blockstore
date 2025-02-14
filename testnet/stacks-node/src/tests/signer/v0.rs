@@ -966,6 +966,10 @@ fn forked_tenure_testing(
         },
         |config| {
             config.miner.tenure_cost_limit_per_block_percentage = None;
+            // this test relies on the miner submitting these timed out commits.
+            // the test still passes without this override, but the default timeout
+            // makes the test take longer than strictly necessary
+            config.miner.block_commit_delay = Duration::from_secs(10);
         },
         None,
         None,
@@ -1204,8 +1208,6 @@ fn forked_tenure_testing(
         (None, None)
     } else {
         // Now let's produce a second block for tenure C and ensure it builds off of block C.
-        let blocks_before = mined_blocks.load(Ordering::SeqCst);
-        let start_time = Instant::now();
         // submit a tx so that the miner will mine an extra block
         let sender_nonce = 0;
         let transfer_tx = make_stacks_transfer(
@@ -1218,16 +1220,10 @@ fn forked_tenure_testing(
         );
         let tx = submit_tx(&http_origin, &transfer_tx);
         info!("Submitted tx {tx} in Tenure C to mine a second block");
-        while mined_blocks.load(Ordering::SeqCst) <= blocks_before {
-            assert!(
-                start_time.elapsed() < Duration::from_secs(30),
-                "FAIL: Test timed out while waiting for block production",
-            );
-            thread::sleep(Duration::from_secs(1));
-        }
-
-        // give C's second block a moment to process
-        sleep_ms(1000);
+        wait_for(60, || {
+            Ok(get_account(&http_origin, &sender_addr).nonce > sender_nonce)
+        })
+        .unwrap();
 
         info!("Tenure C produced a second block!");
 
@@ -1240,27 +1236,22 @@ fn forked_tenure_testing(
         (Some(block_2_tenure_c), Some(block_2_c))
     };
 
-    // allow block C2 to be processed
-    sleep_ms(1000);
+    // make sure that a block commit has been submitted
+    let burn_ht = signer_test.get_peer_info().burn_block_height;
+    wait_for(60, || {
+        let submitted_ht = signer_test
+            .running_nodes
+            .counters
+            .naka_submitted_commit_last_burn_height
+            .load(Ordering::SeqCst);
+        Ok(submitted_ht >= burn_ht)
+    })
+    .unwrap();
 
     info!("Starting Tenure D.");
 
-    // Submit a block commit op for tenure D and mine a stacks block
-    let commits_before = commits_submitted.load(Ordering::SeqCst);
-    let blocks_before = mined_blocks.load(Ordering::SeqCst);
-    next_block_and(
-        &mut signer_test.running_nodes.btc_regtest_controller,
-        60,
-        || {
-            let commits_count = commits_submitted.load(Ordering::SeqCst);
-            let blocks_count = mined_blocks.load(Ordering::SeqCst);
-            Ok(commits_count > commits_before && blocks_count > blocks_before)
-        },
-    )
-    .unwrap();
-
-    // allow block D to be processed
-    sleep_ms(1000);
+    // Mine tenure D
+    signer_test.mine_nakamoto_block(Duration::from_secs(60), false);
 
     let tip_d = NakamotoChainState::get_canonical_block_header(chainstate.db(), &sortdb)
         .unwrap()
@@ -10211,6 +10202,10 @@ fn no_reorg_due_to_successive_block_validation_ok() {
             config.node.data_url = format!("http://{localhost}:{node_1_rpc}");
             config.node.p2p_address = format!("{localhost}:{node_1_p2p}");
             config.miner.wait_on_interim_blocks = Duration::from_secs(5);
+            // Override this option, because this test depends on a block commit being submitted
+            //  without a tenure change being detected. The default option would work, but it would
+            //  make the test take unnecessarily long (and could be close to test failing timeouts)
+            config.miner.block_commit_delay = Duration::from_secs(5);
             config.node.pox_sync_sample_secs = 30;
             config.burnchain.pox_reward_length = Some(max_nakamoto_tenures);
 
@@ -10448,7 +10443,7 @@ fn no_reorg_due_to_successive_block_validation_ok() {
     let burn_height_before = get_burn_height();
     next_block_and(
         &mut signer_test.running_nodes.btc_regtest_controller,
-        30,
+        60,
         || {
             Ok(get_burn_height() > burn_height_before
                 && rl2_proposals.load(Ordering::SeqCst) > proposals_before_2

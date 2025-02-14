@@ -14,7 +14,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 use core::fmt;
-use std::collections::HashSet;
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
@@ -27,7 +26,7 @@ use std::{fs, thread};
 
 use rand::{thread_rng, Rng};
 use stacks::burnchains::{Burnchain, Txid};
-use stacks::chainstate::burn::db::sortdb::SortitionDB;
+use stacks::chainstate::burn::db::sortdb::{FindIter, SortitionDB};
 use stacks::chainstate::burn::operations::leader_block_commit::{
     RewardSetInfo, BURN_BLOCK_MINED_AT_MODULUS,
 };
@@ -62,8 +61,7 @@ use stacks_common::util::vrf::VRFPublicKey;
 
 use super::miner::MinerReason;
 use super::{
-    BlockCommits, Config, Error as NakamotoNodeError, EventDispatcher, Keychain,
-    BLOCK_PROCESSOR_STACK_SIZE,
+    Config, Error as NakamotoNodeError, EventDispatcher, Keychain, BLOCK_PROCESSOR_STACK_SIZE,
 };
 use crate::burnchains::BurnchainController;
 use crate::nakamoto_node::miner::{BlockMinerThread, MinerDirective};
@@ -131,6 +129,85 @@ pub struct LastCommit {
     epoch_id: StacksEpochId,
     /// commit txid (to be filled in on submission)
     txid: Option<Txid>,
+}
+
+/// Timer used to check whether or not a burnchain view change has
+///  waited long enough to issue a burn commit without a tenure change
+enum BurnBlockCommitTimer {
+    /// The timer hasn't been set: we aren't currently waiting to submit a commit
+    NotSet,
+    /// The timer is set, and has been set for a particular burn view
+    Set {
+        start_time: Instant,
+        /// This is the canonical sortition at the time that the
+        ///  timer began. This is used to make sure we aren't reusing
+        ///  the timeout between sortitions
+        burn_tip: ConsensusHash,
+    },
+}
+
+impl BurnBlockCommitTimer {
+    /// Check if the timer has expired (and was set).
+    /// If the timer was not set, then set it.
+    ///
+    /// Returns true if the timer expired
+    fn is_ready(&mut self, current_burn_tip: &ConsensusHash, timeout: &Duration) -> bool {
+        let needs_reset = match self {
+            BurnBlockCommitTimer::NotSet => true,
+            BurnBlockCommitTimer::Set {
+                start_time,
+                burn_tip,
+            } => {
+                if burn_tip != current_burn_tip {
+                    true
+                } else {
+                    if start_time.elapsed() > *timeout {
+                        // timer expired and was pointed at the correct burn tip
+                        // so we can just return is_ready here
+                        return true;
+                    }
+                    // timer didn't expire, but the burn tip was correct, so
+                    //  we don't need to reset the timer
+                    false
+                }
+            }
+        };
+        if needs_reset {
+            info!(
+                "Starting new tenure timeout";
+                "timeout_secs" => timeout.as_secs(),
+                "burn_tip_ch" => %current_burn_tip
+            );
+            *self = Self::Set {
+                burn_tip: current_burn_tip.clone(),
+                start_time: Instant::now(),
+            };
+        }
+
+        debug!(
+            "Waiting for tenure timeout before issuing commit";
+            "elapsed_secs" => self.elapsed_secs(),
+            "burn_tip_ch" => %current_burn_tip
+        );
+
+        false
+    }
+
+    /// At what time, if set, would this timer be ready?
+    fn deadline(&self, timeout: &Duration) -> Option<Instant> {
+        match self {
+            BurnBlockCommitTimer::NotSet => None,
+            BurnBlockCommitTimer::Set { start_time, .. } => Some(*start_time + *timeout),
+        }
+    }
+
+    /// How much time has elapsed on the current timer?
+    fn elapsed_secs(&self) -> u64 {
+        match self {
+            BurnBlockCommitTimer::NotSet => 0,
+            BurnBlockCommitTimer::Set { start_time, .. } => start_time.elapsed().as_secs(),
+        }
+    }
 }
 
 impl LastCommit {
@@ -342,9 +419,6 @@ pub struct RelayerThread {
     pub(crate) burnchain: Burnchain,
     /// height of last VRF key registration request
     last_vrf_key_burn_height: Option<u64>,
-    /// Set of blocks that we have mined, but are still potentially-broadcastable
-    // TODO: this field is a slow leak!
-    pub(crate) last_commits: BlockCommits,
     /// client to the burnchain (used only for sending block-commits)
     pub(crate) bitcoin_controller: BitcoinRegtestController,
     /// client to the event dispatcher
@@ -387,7 +461,7 @@ pub struct RelayerThread {
     /// time it was sent.
     last_committed: Option<LastCommit>,
     /// Timeout for waiting for the first block in a tenure before submitting a block commit
-    new_tenure_timeout: Option<Instant>,
+    new_tenure_timeout: BurnBlockCommitTimer,
     /// Time to wait before attempting a tenure extend
     tenure_extend_time: Option<TenureExtendTime>,
 }
@@ -429,7 +503,6 @@ impl RelayerThread {
             keychain,
             burnchain: runloop.get_burnchain(),
             last_vrf_key_burn_height: None,
-            last_commits: HashSet::new(),
             bitcoin_controller,
             event_dispatcher: runloop.get_event_dispatcher(),
             local_peer,
@@ -448,7 +521,7 @@ impl RelayerThread {
             is_miner,
             next_initiative: Instant::now() + Duration::from_millis(next_initiative_delay),
             last_committed: None,
-            new_tenure_timeout: None,
+            new_tenure_timeout: BurnBlockCommitTimer::NotSet,
             tenure_extend_time: None,
         }
     }
@@ -581,13 +654,13 @@ impl RelayerThread {
             canonical_stacks_snapshot.miner_pk_hash == Some(mining_pkh);
         if won_ongoing_tenure_sortition {
             // we won the current ongoing tenure, but not the most recent sortition. Should we attempt to extend immediately or wait for the incoming miner?
-            if let Ok(result) = Self::find_highest_sortition_commits_to_stacks_tip_tenure(
+            if let Ok(has_higher) = Self::has_higher_sortition_commits_to_stacks_tip_tenure(
                 &self.sortdb,
                 &mut self.chainstate,
                 &sn,
-                &canonical_stacks_snapshot.consensus_hash,
+                &canonical_stacks_snapshot,
             ) {
-                if result.is_some() {
+                if has_higher {
                     debug!("Relayer: Did not win current sortition but won the prior valid sortition. Will attempt to extend tenure after allowing the new miner some time to come online.";
                             "tenure_extend_wait_timeout_ms" => self.config.miner.tenure_extend_wait_timeout.as_millis(),
                     );
@@ -787,8 +860,6 @@ impl RelayerThread {
             .expect("FATAL: failed to query sortition DB")
             .expect("FATAL: unknown consensus hash");
 
-        // always clear this even if this isn't the latest sortition
-        let _cleared = self.last_commits.remove(&sn.winning_block_txid);
         let was_winning_pkh = if let (Some(ref winning_pkh), Some(ref my_pkh)) =
             (sn.miner_pk_hash, self.get_mining_key_pkh())
         {
@@ -1349,23 +1420,16 @@ impl RelayerThread {
     /// `sort_tip` whose winning commit's parent tenure ID matches the `stacks_tip`,
     /// and whose consensus hash matches the `stacks_tip`'s tenure ID.
     ///
-    /// Returns Ok(Some(..)) if such a sortition is found, and is higher than that of
+    /// Returns Ok(true) if such a sortition is found, and is higher than that of
     /// `elected_tenure_id`.
-    /// Returns Ok(None) if no such sortition is found.
+    /// Returns Ok(false) if no such sortition is found.
     /// Returns Err(..) on DB errors.
-    fn find_highest_sortition_commits_to_stacks_tip_tenure(
+    fn has_higher_sortition_commits_to_stacks_tip_tenure(
         sortdb: &SortitionDB,
         chain_state: &mut StacksChainState,
-        sort_tip: &BlockSnapshot,
-        elected_tenure_id: &ConsensusHash,
-    ) -> Result<Option<BlockSnapshot>, NakamotoNodeError> {
-        // sanity check -- if sort_tip is the elected_tenure_id sortition, then there are no higher
-        // valid sortitions.
-        if sort_tip.consensus_hash == *elected_tenure_id {
-            return Ok(None);
-        }
-
-        let mut cursor = sort_tip.clone();
+        sortition_tip: &BlockSnapshot,
+        elected_tenure: &BlockSnapshot,
+    ) -> Result<bool, NakamotoNodeError> {
         let (canonical_stacks_tip_ch, canonical_stacks_tip_bh) =
             SortitionDB::get_canonical_stacks_chain_tip_hash(sortdb.conn()).unwrap();
         let canonical_stacks_tip =
@@ -1377,34 +1441,30 @@ impl RelayerThread {
             return Err(NakamotoNodeError::ParentNotFound);
         };
 
-        loop {
-            debug!(
-                "Relayer: check sortition {} to see if it is valid",
-                &cursor.consensus_hash
-            );
+        sortdb
+            .find_from(sortition_tip.clone(), |cursor| {
+                debug!(
+                    "Relayer: check sortition {} to see if it is valid",
+                    &cursor.consensus_hash
+                );
+                // have we reached the last tenure we're looking at?
+                if cursor.block_height <= elected_tenure.block_height {
+                    return Ok(FindIter::Halt);
+                }
 
-            if Self::sortition_commits_to_stacks_tip_tenure(
-                chain_state,
-                &canonical_stacks_tip,
-                &canonical_stacks_tip_sn,
-                &cursor,
-            )? {
-                return Ok(Some(cursor));
-            }
+                if Self::sortition_commits_to_stacks_tip_tenure(
+                    chain_state,
+                    &canonical_stacks_tip,
+                    &canonical_stacks_tip_sn,
+                    &cursor,
+                )? {
+                    return Ok(FindIter::Found(()));
+                }
 
-            // nope. continue the search
-            let Some(cursor_parent) =
-                SortitionDB::get_block_snapshot(sortdb.conn(), &cursor.parent_sortition_id)?
-            else {
-                return Ok(None);
-            };
-
-            if cursor_parent.consensus_hash == *elected_tenure_id {
-                return Ok(None);
-            }
-
-            cursor = cursor_parent;
-        }
+                // nope. continue the search
+                return Ok(FindIter::Continue);
+            })
+            .map(|found| found.is_some())
     }
 
     /// Attempt to continue a miner's tenure into the next burn block.
@@ -1563,28 +1623,33 @@ impl RelayerThread {
     }
 
     /// Generate and submit the next block-commit, and record it locally
-    fn issue_block_commit(
-        &mut self,
-        tip_block_ch: ConsensusHash,
-        tip_block_bh: BlockHeaderHash,
-    ) -> Result<(), NakamotoNodeError> {
+    fn issue_block_commit(&mut self) -> Result<(), NakamotoNodeError> {
         if self.fault_injection_skip_block_commit() {
             warn!("Relayer: not submitting block-commit to bitcoin network due to test directive.");
             return Ok(());
         }
+        let (tip_block_ch, tip_block_bh) = SortitionDB::get_canonical_stacks_chain_tip_hash(
+            self.sortdb.conn(),
+        )
+        .unwrap_or_else(|e| {
+            panic!("Failed to load canonical stacks tip: {e:?}");
+        });
         let mut last_committed = self.make_block_commit(&tip_block_ch, &tip_block_bh)?;
 
-        // last chance -- is this still the stacks tip?
-        let (cur_stacks_tip_ch, cur_stacks_tip_bh) =
-            SortitionDB::get_canonical_stacks_chain_tip_hash(self.sortdb.conn()).unwrap_or_else(
-                |e| {
-                    panic!("Failed to load canonical stacks tip: {e:?}");
-                },
-            );
-
-        if cur_stacks_tip_ch != tip_block_ch || cur_stacks_tip_bh != tip_block_bh {
+        // last chance -- is this tenure still the canonical tip?
+        let (cur_stacks_tip_ch, _) = SortitionDB::get_canonical_stacks_chain_tip_hash(
+            self.sortdb.conn(),
+        )
+        .unwrap_or_else(|e| {
+            panic!("Failed to load canonical stacks tip: {e:?}");
+        });
+        if last_committed.get_tenure_id() != &cur_stacks_tip_ch {
             info!(
-                "Stacks tip changed prior to commit: {cur_stacks_tip_ch}/{cur_stacks_tip_bh} != {tip_block_ch}/{tip_block_bh}"
+                "Stacks tenure changed prior to commit";
+                "current_stacks_tip_ch" => %cur_stacks_tip_ch,
+                "committed_tenure_ch" => %last_committed.get_tenure_id(),
+                "issue_commit_tip_ch" => %tip_block_ch,
+                "issue_commit_tip_bh" => %tip_block_bh
             );
             return Err(NakamotoNodeError::StacksTipChanged);
         }
@@ -1635,7 +1700,6 @@ impl RelayerThread {
 
         // update local state
         last_committed.set_txid(&txid);
-        self.last_commits.insert(txid);
         self.globals
             .counters
             .bump_naka_submitted_commits(last_committed.burn_tip.block_height, tip_height);
@@ -1650,47 +1714,30 @@ impl RelayerThread {
     /// * If the stacks chain tip or burnchain tip has changed, then issue a block-commit
     /// * If the last burn view we started a miner for is not the canonical burn view, then
     /// try and start a new tenure (or continue an existing one).
-    fn initiative(&mut self) -> Option<RelayerDirective> {
+    fn initiative(&mut self) -> Result<Option<RelayerDirective>, NakamotoNodeError> {
         if !self.is_miner {
-            return None;
+            return Ok(None);
         }
 
         match self.globals.get_leader_key_registration_state() {
             // do we need a VRF key registration?
             LeaderKeyRegistrationState::Inactive => {
-                let Ok(sort_tip) = SortitionDB::get_canonical_burn_chain_tip(self.sortdb.conn())
-                else {
-                    warn!("Failed to fetch sortition tip while needing to register VRF key");
-                    return None;
-                };
-                return Some(RelayerDirective::RegisterKey(sort_tip));
+                let sort_tip = SortitionDB::get_canonical_burn_chain_tip(self.sortdb.conn())?;
+                return Ok(Some(RelayerDirective::RegisterKey(sort_tip)));
             }
             // are we still waiting on a pending registration?
             LeaderKeyRegistrationState::Pending(..) => {
-                return None;
+                return Ok(None);
             }
             LeaderKeyRegistrationState::Active(_) => {}
         };
 
         // load up canonical sortition and stacks tips
-        let Ok(sort_tip) =
-            SortitionDB::get_canonical_burn_chain_tip(self.sortdb.conn()).map_err(|e| {
-                error!("Failed to load canonical sortition tip: {e:?}");
-                e
-            })
-        else {
-            return None;
-        };
+        let sort_tip = SortitionDB::get_canonical_burn_chain_tip(self.sortdb.conn())?;
 
         // NOTE: this may be an epoch2x tip
-        let Ok((stacks_tip_ch, stacks_tip_bh)) =
-            SortitionDB::get_canonical_stacks_chain_tip_hash(self.sortdb.conn()).map_err(|e| {
-                error!("Failed to load canonical stacks tip: {e:?}");
-                e
-            })
-        else {
-            return None;
-        };
+        let (stacks_tip_ch, stacks_tip_bh) =
+            SortitionDB::get_canonical_stacks_chain_tip_hash(self.sortdb.conn())?;
         let stacks_tip = StacksBlockId::new(&stacks_tip_ch, &stacks_tip_bh);
 
         // check stacks and sortition tips to see if any chainstate change has happened.
@@ -1720,40 +1767,71 @@ impl RelayerThread {
 
         if !burnchain_changed && !highest_tenure_changed {
             // nothing to do
-            return None;
+            return Ok(None);
         }
 
-        if !highest_tenure_changed {
-            debug!("Relayer: burnchain view changed, but highest tenure did not");
-            // The burnchain view changed, but the highest tenure did not, so
-            // wait a bit for the first block in the new tenure to arrive. This
-            // is to avoid submitting a block commit that will be immediately
-            // RBFed when the first block arrives.
-            if let Some(new_tenure_timeout) = self.new_tenure_timeout {
-                debug!(
-                    "Relayer: {}s elapsed since burn block arrival",
-                    new_tenure_timeout.elapsed().as_secs(),
-                );
-                if new_tenure_timeout.elapsed() < self.config.miner.block_commit_delay {
-                    return None;
-                }
-            } else {
-                info!(
-                    "Relayer: starting new tenure timeout for {}s",
-                    self.config.miner.block_commit_delay.as_secs()
-                );
-                let timeout = Instant::now() + self.config.miner.block_commit_delay;
-                self.new_tenure_timeout = Some(Instant::now());
-                self.next_initiative = timeout;
-                return None;
+        if highest_tenure_changed {
+            // highest-tenure view changed, so we need to send (or RBF) a commit
+            return Ok(Some(RelayerDirective::IssueBlockCommit(
+                stacks_tip_ch,
+                stacks_tip_bh,
+            )));
+        }
+
+        debug!("Relayer: burnchain view changed, but highest tenure did not");
+        // First, check if the changed burnchain view includes any
+        // sortitions. If it doesn't submit a block commit immediately.
+        //
+        // If it does, then wait a bit for the first block in the new
+        // tenure to arrive. This is to avoid submitting a block
+        // commit that will be immediately RBFed when the first
+        // block arrives.
+        if let Some(last_committed) = self.last_committed.as_ref() {
+            // check if all the sortitions after `last_tenure` are empty sortitions. if they are,
+            //  we don't need to wait at all to submit a commit
+            let last_tenure_tip_height = SortitionDB::get_consensus_hash_height(
+                &self.sortdb,
+                last_committed.get_tenure_id(),
+            )?
+            .ok_or_else(|| NakamotoNodeError::ParentNotFound)?;
+            let no_sortitions_after_last_tenure = self
+                .sortdb
+                .find_in_canonical::<_, _, NakamotoNodeError>(|cursor| {
+                    if cursor.block_height <= last_tenure_tip_height {
+                        return Ok(FindIter::Halt);
+                    }
+                    if cursor.sortition {
+                        return Ok(FindIter::Found(()));
+                    }
+                    Ok(FindIter::Continue)
+                })?
+                .is_none();
+            if no_sortitions_after_last_tenure {
+                return Ok(Some(RelayerDirective::IssueBlockCommit(
+                    stacks_tip_ch,
+                    stacks_tip_bh,
+                )));
             }
         }
 
-        // burnchain view or highest-tenure view changed, so we need to send (or RBF) a commit
-        Some(RelayerDirective::IssueBlockCommit(
-            stacks_tip_ch,
-            stacks_tip_bh,
-        ))
+        if self.new_tenure_timeout.is_ready(
+            &sort_tip.consensus_hash,
+            &self.config.miner.block_commit_delay,
+        ) {
+            return Ok(Some(RelayerDirective::IssueBlockCommit(
+                stacks_tip_ch,
+                stacks_tip_bh,
+            )));
+        } else {
+            if let Some(deadline) = self
+                .new_tenure_timeout
+                .deadline(&self.config.miner.block_commit_delay)
+            {
+                self.next_initiative = std::cmp::min(self.next_initiative, deadline);
+            }
+
+            return Ok(None);
+        }
     }
 
     /// Try to start up a tenure-extend if the tenure_extend_time has expired.
@@ -1905,18 +1983,22 @@ impl RelayerThread {
             self.check_tenure_timers();
             let raised_initiative = self.globals.take_initiative();
             let timed_out = Instant::now() >= self.next_initiative;
-            let mut initiative_directive = if raised_initiative.is_some() || timed_out {
+            let initiative_directive = if raised_initiative.is_some() || timed_out {
                 self.next_initiative =
                     Instant::now() + Duration::from_millis(self.config.node.next_initiative_delay);
                 self.initiative()
+                    .inspect_err(|e| {
+                        error!("Error while getting directive from initiative()"; "err" => ?e);
+                    })
+                    .ok()
+                    .flatten()
             } else {
                 None
             };
 
-            let directive_opt = if let Some(directive) = initiative_directive.take() {
-                Some(directive)
-            } else {
-                // channel was drained, so do a time-bound recv
+            let directive_opt = initiative_directive.or_else(|| {
+                // do a time-bound recv on the relayer channel so that we can hit the `initiative()` invocation
+                //  and keep_running() checks on each loop iteration
                 match relay_rcv.recv_timeout(Duration::from_millis(poll_frequency_ms)) {
                     Ok(directive) => {
                         // only do this once, so we can call .initiative() again
@@ -1924,10 +2006,11 @@ impl RelayerThread {
                     }
                     Err(RecvTimeoutError::Timeout) => None,
                     Err(RecvTimeoutError::Disconnected) => {
-                        break;
+                        warn!("Relayer receive channel disconnected. Exiting relayer thread");
+                        Some(RelayerDirective::Exit)
                     }
                 }
-            };
+            });
 
             if let Some(directive) = directive_opt {
                 debug!("Relayer: main loop directive";
@@ -2032,7 +2115,7 @@ impl RelayerThread {
                 )
             }
             // These are triggered by the relayer waking up, seeing a new consensus hash *or* a new first tenure block
-            RelayerDirective::IssueBlockCommit(consensus_hash, block_hash) => {
+            RelayerDirective::IssueBlockCommit(..) => {
                 if !self.is_miner {
                     return true;
                 }
@@ -2040,7 +2123,7 @@ impl RelayerThread {
                     debug!("In initial block download, will not issue block commit");
                     return true;
                 }
-                if let Err(e) = self.issue_block_commit(consensus_hash, block_hash) {
+                if let Err(e) = self.issue_block_commit() {
                     warn!("Relayer failed to issue block commit"; "err" => ?e);
                 }
                 true
@@ -2057,6 +2140,8 @@ pub mod test {
     use std::fs::File;
     use std::io::Write;
     use std::path::Path;
+    use std::time::Duration;
+    use std::u64;
 
     use rand::{thread_rng, Rng};
     use stacks::burnchains::Txid;
@@ -2066,7 +2151,7 @@ pub mod test {
     use stacks::util::secp256k1::Secp256k1PublicKey;
     use stacks::util::vrf::VRFPublicKey;
 
-    use super::RelayerThread;
+    use super::{BurnBlockCommitTimer, RelayerThread};
     use crate::nakamoto_node::save_activated_vrf_key;
     use crate::run_loop::RegisteredKey;
     use crate::Keychain;
@@ -2247,5 +2332,48 @@ pub mod test {
             &canonical_stacks_snapshot,
             &canonical_stacks_snapshot_is_lower_than_last_winning_snapshot
         ));
+    }
+
+    #[test]
+    fn burn_block_commit_timer_units() {
+        let mut burn_block_timer = BurnBlockCommitTimer::NotSet;
+        assert_eq!(burn_block_timer.elapsed_secs(), 0);
+
+        let ch_0 = ConsensusHash([0; 20]);
+        let ch_1 = ConsensusHash([1; 20]);
+        let ch_2 = ConsensusHash([2; 20]);
+
+        assert!(!burn_block_timer.is_ready(&ch_0, &Duration::from_secs(1)));
+        let BurnBlockCommitTimer::Set { burn_tip, .. } = &burn_block_timer else {
+            panic!("The burn block timer should be set");
+        };
+        assert_eq!(burn_tip, &ch_0);
+
+        std::thread::sleep(Duration::from_secs(1));
+
+        assert!(burn_block_timer.is_ready(&ch_0, &Duration::from_secs(0)));
+        let BurnBlockCommitTimer::Set { burn_tip, .. } = &burn_block_timer else {
+            panic!("The burn block timer should be set");
+        };
+        assert_eq!(burn_tip, &ch_0);
+
+        assert!(!burn_block_timer.is_ready(&ch_1, &Duration::from_secs(0)));
+        let BurnBlockCommitTimer::Set { burn_tip, .. } = &burn_block_timer else {
+            panic!("The burn block timer should be set");
+        };
+        assert_eq!(burn_tip, &ch_1);
+
+        assert!(!burn_block_timer.is_ready(&ch_1, &Duration::from_secs(u64::MAX)));
+        let BurnBlockCommitTimer::Set { burn_tip, .. } = &burn_block_timer else {
+            panic!("The burn block timer should be set");
+        };
+        assert_eq!(burn_tip, &ch_1);
+
+        std::thread::sleep(Duration::from_secs(1));
+        assert!(!burn_block_timer.is_ready(&ch_2, &Duration::from_secs(0)));
+        let BurnBlockCommitTimer::Set { burn_tip, .. } = &burn_block_timer else {
+            panic!("The burn block timer should be set");
+        };
+        assert_eq!(burn_tip, &ch_2);
     }
 }
