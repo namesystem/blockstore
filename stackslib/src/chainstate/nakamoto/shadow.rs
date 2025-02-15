@@ -897,6 +897,7 @@ pub fn process_shadow_block(
             sort_db,
             &sort_tip.sortition_id,
             no_dispatch.as_ref(),
+            false,
         ) {
             Ok(receipt_opt) => receipt_opt,
             Err(ChainstateError::InvalidStacksBlock(msg)) => {

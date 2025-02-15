@@ -801,6 +801,7 @@ impl<
                 &mut self.sortition_db,
                 &canonical_sortition_tip,
                 self.dispatcher,
+                self.config.txindex,
             ) {
                 Ok(receipt_opt) => receipt_opt,
                 Err(ChainstateError::InvalidStacksBlock(msg)) => {

@@ -5843,7 +5843,7 @@ impl StacksChainState {
         )
         .expect("FATAL: failed to advance chain tip");
 
-        chainstate_tx.log_transactions_processed(&new_tip.index_block_hash(), &tx_receipts);
+        chainstate_tx.log_transactions_processed(&tx_receipts);
 
         // store the reward set calculated during this block if it happened
         // NOTE: miner and proposal evaluation should not invoke this because

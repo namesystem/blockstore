@@ -11,6 +11,7 @@ and this project adheres to the versioning scheme outlined in the [README.md](RE
 
 - Introduced the `reorg_attempts_activity_timeout_ms` configuration option for signers which is used to determine the length of time after the last block of a tenure is confirmed that an incoming miner's attempts to reorg it are considered valid miner activity.
 - Add signer configuration option `tenure_idle_timeout_buffer_secs` to specify the number of seconds of buffer the signer will add to its tenure extend time that it sends to miners. The idea is to allow for some clock skew between the miner and signers, preventing the case where the miner attempts to tenure extend too early.
+- Add `txindex` configuration option enabling the storage (and querying via api) of transactions. Note: the old STACKS_TRANSACTION_LOG environment var configuration is no more available.
 
 ### Changed
 

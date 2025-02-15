@@ -34,7 +34,7 @@ use stacks_common::types::chainstate::{
     BurnchainHeaderHash, StacksAddress, StacksBlockId, StacksPrivateKey, StacksPublicKey,
 };
 use stacks_common::types::{Address, StacksEpoch, StacksEpochId, StacksPublicKeyBuffer};
-use stacks_common::util::hash::Hash160;
+use stacks_common::util::hash::{to_hex, Hash160};
 use stacks_common::util::secp256k1::Secp256k1PrivateKey;
 use stacks_common::util::vrf::VRFProof;
 
@@ -1429,7 +1429,7 @@ fn pox_treatment() {
             false
         },
     );
-    let processing_result = peer.try_process_block(&invalid_block).unwrap_err();
+    let processing_result = peer.try_process_block(&invalid_block, false).unwrap_err();
     assert_eq!(
         processing_result.to_string(),
         "Bitvec does not match the block commit's PoX handling".to_string(),
@@ -1520,7 +1520,7 @@ fn pox_treatment() {
             false
         },
     );
-    let processing_result = peer.try_process_block(&invalid_block).unwrap_err();
+    let processing_result = peer.try_process_block(&invalid_block, false).unwrap_err();
     assert_eq!(
         processing_result.to_string(),
         "Bitvec does not match the block commit's PoX handling".to_string(),
@@ -1566,6 +1566,97 @@ fn pox_treatment() {
         tip.anchored_header.as_stacks_nakamoto().unwrap(),
         &blocks.last().unwrap().header
     );
+}
+
+#[test]
+// Test Transactions indexing system
+fn transactions_indexing() {
+    let private_key = StacksPrivateKey::from_seed(&[2]);
+    let addr = StacksAddress::p2pkh(false, &StacksPublicKey::from_private(&private_key));
+
+    let num_stackers: u32 = 4;
+    let mut signing_key_seed = num_stackers.to_be_bytes().to_vec();
+    signing_key_seed.extend_from_slice(&[1, 1, 1, 1]);
+    let signing_key = StacksPrivateKey::from_seed(signing_key_seed.as_slice());
+    let test_stackers = (0..num_stackers)
+        .map(|index| TestStacker {
+            signer_private_key: signing_key.clone(),
+            stacker_private_key: StacksPrivateKey::from_seed(&index.to_be_bytes()),
+            amount: u64::MAX as u128 - 10000,
+            pox_addr: Some(PoxAddress::Standard(
+                StacksAddress::new(
+                    C32_ADDRESS_VERSION_TESTNET_SINGLESIG,
+                    Hash160::from_data(&index.to_be_bytes()),
+                )
+                .unwrap(),
+                Some(AddressHashMode::SerializeP2PKH),
+            )),
+            max_amount: None,
+        })
+        .collect::<Vec<_>>();
+    let test_signers = TestSigners::new(vec![signing_key]);
+    let mut pox_constants = TestPeerConfig::default().burnchain.pox_constants;
+    pox_constants.reward_cycle_length = 10;
+    pox_constants.v2_unlock_height = 21;
+    pox_constants.pox_3_activation_height = 26;
+    pox_constants.v3_unlock_height = 27;
+    pox_constants.pox_4_activation_height = 28;
+
+    let mut boot_plan = NakamotoBootPlan::new(function_name!())
+        .with_test_stackers(test_stackers.clone())
+        .with_test_signers(test_signers.clone())
+        .with_private_key(private_key);
+    boot_plan.pox_constants = pox_constants;
+
+    let mut peer = boot_plan.boot_into_nakamoto_peer(vec![], None);
+
+    // generate a new block with txindex
+    let (tracked_block, burn_height, ..) =
+        peer.single_block_tenure(&private_key, |_| {}, |_| {}, |_| false);
+
+    assert_eq!(peer.try_process_block(&tracked_block, true).unwrap(), true);
+
+    let tracked_block_id = tracked_block.block_id();
+
+    // generate a new block but without txindex
+    let (untracked_block, burn_height, ..) =
+        peer.single_block_tenure(&private_key, |_| {}, |_| {}, |_| false);
+
+    assert_eq!(
+        peer.try_process_block(&untracked_block, false).unwrap(),
+        true
+    );
+
+    let untracked_block_id = untracked_block.block_id();
+
+    let chainstate = &peer.stacks_node.unwrap().chainstate;
+
+    // compare transactions to what has been tracked
+    for tx in tracked_block.txs {
+        let current_tx_hex = to_hex(&tx.serialize_to_vec());
+        let (index_block_hash, tx_hex) =
+            NakamotoChainState::get_index_block_hash_and_tx_hex_from_txid(
+                &chainstate.index_conn(),
+                tx.txid(),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(index_block_hash, tracked_block_id);
+        assert_eq!(tx_hex, current_tx_hex);
+    }
+
+    // ensure untracked transactions are not recorded
+    for tx in untracked_block.txs {
+        assert_eq!(
+            NakamotoChainState::get_index_block_hash_and_tx_hex_from_txid(
+                &chainstate.index_conn(),
+                tx.txid(),
+            )
+            .unwrap()
+            .is_none(),
+            true
+        );
+    }
 }
 
 /// Test chainstate getters against an instantiated epoch2/Nakamoto chain.

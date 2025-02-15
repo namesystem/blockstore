@@ -1854,6 +1854,7 @@ impl NakamotoChainState {
         sort_db: &mut SortitionDB,
         canonical_sortition_tip: &SortitionId,
         dispatcher_opt: Option<&T>,
+        txindex: bool,
     ) -> Result<Option<StacksEpochReceipt>, ChainstateError> {
         #[cfg(test)]
         fault_injection::stall_block_processing();
@@ -2145,6 +2146,20 @@ impl NakamotoChainState {
             )
         {
             tx_receipts.push(unlock_receipt);
+        }
+
+        // if txindex is enabled, let's record each transaction in the transactions table
+        if txindex {
+            let block_id = next_ready_block.block_id();
+            let stacks_db_tx = stacks_chain_state.index_tx_begin();
+            for tx_receipt in tx_receipts.iter() {
+                Self::record_transaction(&stacks_db_tx, &block_id, tx_receipt);
+            }
+
+            let commit = stacks_db_tx.commit();
+            if commit.is_err() {
+                warn!("Could not index transactions: {}", commit.err().unwrap());
+            }
         }
 
         // announce the block, if we're connected to an event dispatcher
@@ -3519,6 +3534,42 @@ impl NakamotoChainState {
         Ok(())
     }
 
+    // Index a transaction in the transactions table (used by txindex)
+    pub fn record_transaction(
+        stacks_db_tx: &StacksDBTx,
+        block_id: &StacksBlockId,
+        tx_receipt: &StacksTransactionReceipt,
+    ) {
+        let insert =
+            "INSERT INTO transactions (txid, index_block_hash, tx_hex, result) VALUES (?, ?, ?, ?)";
+        let txid = tx_receipt.transaction.txid();
+        let tx_hex = tx_receipt.transaction.serialize_to_dbstring();
+        let result = tx_receipt.result.to_string();
+        let params = params![txid, block_id, tx_hex, result];
+        if let Err(e) = stacks_db_tx.execute(insert, params) {
+            warn!("Failed to record TX: {}", e);
+        }
+    }
+
+    // Get index_block_hash and transaction payload hex by txid from the transactions table
+    pub fn get_index_block_hash_and_tx_hex_from_txid(
+        conn: &Connection,
+        txid: Txid,
+    ) -> Result<Option<(StacksBlockId, String)>, ChainstateError> {
+        let sql = "SELECT index_block_hash, tx_hex FROM transactions WHERE txid = ?";
+        let args = params![txid];
+
+        let mut stmt = conn.prepare(sql)?;
+        Ok(stmt
+            .query_row(args, |row| {
+                let index_block_hash: StacksBlockId = row.get(0)?;
+                let tx_hex: String = row.get(1)?;
+
+                Ok((index_block_hash, tx_hex))
+            })
+            .optional()?)
+    }
+
     /// Fetch number of blocks signed for a given signer and reward cycle
     /// This is the data tracked by `record_block_signers()`
     pub fn get_signer_block_count(
@@ -4642,7 +4693,7 @@ impl NakamotoChainState {
         .expect("FATAL: failed to advance chain tip");
 
         let new_block_id = new_tip.index_block_hash();
-        chainstate_tx.log_transactions_processed(&new_block_id, &tx_receipts);
+        chainstate_tx.log_transactions_processed(&tx_receipts);
 
         let reward_cycle = pox_constants
             .block_height_to_reward_cycle(first_block_height, chain_tip_burn_header_height.into());

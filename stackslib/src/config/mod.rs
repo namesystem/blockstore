@@ -1691,6 +1691,8 @@ pub struct NodeConfig {
     pub chain_liveness_poll_time_secs: u64,
     /// stacker DBs we replicate
     pub stacker_dbs: Vec<QualifiedContractIdentifier>,
+    /// enable transactions indexing
+    pub txindex: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1954,6 +1956,7 @@ impl Default for NodeConfig {
             fault_injection_hide_blocks: false,
             chain_liveness_poll_time_secs: 300,
             stacker_dbs: vec![],
+            txindex: false,
         }
     }
 }
@@ -2472,6 +2475,8 @@ pub struct NodeConfigFile {
     pub stacker_dbs: Option<Vec<String>>,
     /// fault injection: fail to push blocks with this probability (0-100)
     pub fault_injection_block_push_fail_probability: Option<u8>,
+    /// enable transactions indexing
+    pub txindex: bool,
 }
 
 impl NodeConfigFile {
@@ -2570,6 +2575,8 @@ impl NodeConfigFile {
             } else {
                 default_node_config.fault_injection_block_push_fail_probability
             },
+
+            txindex: self.txindex,
         };
         Ok(node_config)
     }
