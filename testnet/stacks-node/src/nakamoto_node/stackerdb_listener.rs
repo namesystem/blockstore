@@ -54,8 +54,8 @@ pub static EVENT_RECEIVER_POLL: Duration = Duration::from_millis(500);
 pub struct BlockStatus {
     pub responded_signers: HashSet<StacksPublicKey>,
     pub gathered_signatures: BTreeMap<u32, MessageSignature>,
-    pub total_weight_signed: u32,
-    pub total_reject_weight: u32,
+    pub total_weight_approved: u32,
+    pub total_weight_rejected: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -312,14 +312,17 @@ impl StackerDBListener {
                                 "signer_slot_id" => slot_id,
                                 "signature" => %signature,
                                 "signer_weight" => signer_entry.weight,
-                                "total_weight_signed" => block.total_weight_signed,
+                                "total_weight_approved" => block.total_weight_approved,
+                                "percent_approved" => block.total_weight_approved as f64 / self.total_weight as f64 * 100.0,
+                                "total_weight_rejected" => block.total_weight_rejected,
+                                "percent_rejected" => block.total_weight_rejected as f64 / self.total_weight as f64 * 100.0,
                             );
                             continue;
                         }
 
                         if !block.gathered_signatures.contains_key(&slot_id) {
-                            block.total_weight_signed = block
-                                .total_weight_signed
+                            block.total_weight_approved = block
+                                .total_weight_approved
                                 .checked_add(signer_entry.weight)
                                 .expect("FATAL: total weight signed exceeds u32::MAX");
                         }
@@ -330,14 +333,18 @@ impl StackerDBListener {
                             "signer_slot_id" => slot_id,
                             "signature" => %signature,
                             "signer_weight" => signer_entry.weight,
-                            "total_weight_signed" => block.total_weight_signed,
+                            "total_weight_approved" => block.total_weight_approved,
+                            "percent_approved" => block.total_weight_approved as f64 / self.total_weight as f64 * 100.0,
+                            "total_weight_rejected" => block.total_weight_rejected,
+                            "percent_rejected" => block.total_weight_rejected as f64 / self.total_weight as f64 * 100.0,
+                            "weight_threshold" => self.weight_threshold,
                             "tenure_extend_timestamp" => tenure_extend_timestamp,
                             "server_version" => metadata.server_version,
                         );
                         block.gathered_signatures.insert(slot_id, signature);
                         block.responded_signers.insert(signer_pubkey);
 
-                        if block.total_weight_signed >= self.weight_threshold {
+                        if block.total_weight_approved >= self.weight_threshold {
                             // Signal to anyone waiting on this block that we have enough signatures
                             cvar.notify_all();
                         }
@@ -378,8 +385,8 @@ impl StackerDBListener {
                             }
                         };
                         block.responded_signers.insert(rejected_pubkey);
-                        block.total_reject_weight = block
-                            .total_reject_weight
+                        block.total_weight_rejected = block
+                            .total_weight_rejected
                             .checked_add(signer_entry.weight)
                             .expect("FATAL: total weight rejected exceeds u32::MAX");
 
@@ -389,7 +396,11 @@ impl StackerDBListener {
                             "signer_slot_id" => slot_id,
                             "signature" => %rejected_data.signature,
                             "signer_weight" => signer_entry.weight,
-                            "total_weight_signed" => block.total_weight_signed,
+                            "total_weight_approved" => block.total_weight_approved,
+                            "percent_approved" => block.total_weight_approved as f64 / self.total_weight as f64 * 100.0,
+                            "total_weight_rejected" => block.total_weight_rejected,
+                            "percent_rejected" => block.total_weight_rejected as f64 / self.total_weight as f64 * 100.0,
+                            "weight_threshold" => self.weight_threshold,
                             "reason" => rejected_data.reason,
                             "reason_code" => %rejected_data.reason_code,
                             "tenure_extend_timestamp" => rejected_data.response_data.tenure_extend_timestamp,
@@ -397,7 +408,7 @@ impl StackerDBListener {
                         );
 
                         if block
-                            .total_reject_weight
+                            .total_weight_rejected
                             .saturating_add(self.weight_threshold)
                             > self.total_weight
                         {
@@ -479,8 +490,8 @@ impl StackerDBListenerComms {
         let block_status = BlockStatus {
             responded_signers: HashSet::new(),
             gathered_signatures: BTreeMap::new(),
-            total_weight_signed: 0,
-            total_reject_weight: 0,
+            total_weight_approved: 0,
+            total_weight_rejected: 0,
         };
         blocks.insert(block.signer_signature_hash(), block_status);
     }

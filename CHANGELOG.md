@@ -18,6 +18,7 @@ and this project adheres to the versioning scheme outlined in the [README.md](RE
 - Logging improvements:
   - P2P logs now includes a reason for dropping a peer or neighbor
   - Improvements to how a PeerAddress is logged (human readable format vs hex)
+  - Add weight threshold and percentages to `StackerDBListener` logs
 
 ### Fixed
 

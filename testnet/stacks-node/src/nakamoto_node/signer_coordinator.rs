@@ -341,11 +341,11 @@ impl SignerCoordinator {
                         return false;
                     }
                     // number or rejections changed?
-                    if status.total_reject_weight != rejections {
+                    if status.total_weight_rejected != rejections {
                         return false;
                     }
                     // enough signatures?
-                    return status.total_weight_signed < self.weight_threshold;
+                    return status.total_weight_approved < self.weight_threshold;
                 },
             )? {
                 Some(status) => status,
@@ -407,8 +407,8 @@ impl SignerCoordinator {
                 }
             };
 
-            if rejections != block_status.total_reject_weight {
-                rejections = block_status.total_reject_weight;
+            if rejections != block_status.total_weight_rejected {
+                rejections = block_status.total_weight_rejected;
                 let (rejections_step, new_rejections_timeout) = self
                     .block_rejection_timeout_steps
                     .range((Included(0), Included(rejections)))
@@ -430,18 +430,18 @@ impl SignerCoordinator {
             }
 
             if block_status
-                .total_reject_weight
+                .total_weight_rejected
                 .saturating_add(self.weight_threshold)
                 > self.total_weight
             {
                 info!(
                     "{}/{} signers vote to reject block",
-                    block_status.total_reject_weight, self.total_weight;
+                    block_status.total_weight_rejected, self.total_weight;
                     "block_signer_sighash" => %block_signer_sighash,
                 );
                 counters.bump_naka_rejected_blocks();
                 return Err(NakamotoNodeError::SignersRejected);
-            } else if block_status.total_weight_signed >= self.weight_threshold {
+            } else if block_status.total_weight_approved >= self.weight_threshold {
                 info!("Received enough signatures, block accepted";
                     "block_signer_sighash" => %block_signer_sighash,
                 );
