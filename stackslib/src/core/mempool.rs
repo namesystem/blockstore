@@ -1214,19 +1214,13 @@ fn order_nonces(
     sponsor_actual: u64,
     sponsor_expected: u64,
 ) -> Ordering {
-    if origin_actual < origin_expected {
-        return Ordering::Less;
-    } else if origin_actual > origin_expected {
-        return Ordering::Greater;
+    if let o @ (Ordering::Greater | Ordering::Less) = origin_actual.cmp(&origin_expected) {
+        o
+    } else if let o @ (Ordering::Greater | Ordering::Less) = sponsor_actual.cmp(&sponsor_expected) {
+        o
+    } else {
+        Ordering::Equal
     }
-
-    if sponsor_actual < sponsor_expected {
-        return Ordering::Less;
-    } else if sponsor_actual > sponsor_expected {
-        return Ordering::Greater;
-    }
-
-    Ordering::Equal
 }
 
 impl MemPoolDB {

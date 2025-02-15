@@ -15,6 +15,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::char::from_digit;
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::io::{BufWriter, Cursor, Read, Seek, SeekFrom, Write};
@@ -1042,11 +1043,8 @@ impl<T: MarfTrieId> TrieRAM<T> {
         }
 
         trace!(
-            "TrieRAM: write_nodetype({:?}): at {}: {:?} {:?}",
+            "TrieRAM: write_nodetype({:?}): at {node_array_ptr}: {hash:?} {node:?}",
             &self.block_header,
-            node_array_ptr,
-            &hash,
-            node
         );
 
         self.write_count += 1;
@@ -1059,16 +1057,24 @@ impl<T: MarfTrieId> TrieRAM<T> {
             }
         }
 
-        if node_array_ptr < (self.data.len() as u32) {
-            self.data[node_array_ptr as usize] = (node.clone(), hash);
-            Ok(())
-        } else if node_array_ptr == (self.data.len() as u32) {
-            self.data.push((node.clone(), hash));
-            self.total_bytes += get_node_byte_len(node);
-            Ok(())
-        } else {
-            error!("Failed to write node bytes: off the end of the buffer");
-            Err(Error::NotFoundError)
+        let node_array_ptr = usize::try_from(node_array_ptr).map_err(|e| {
+            error!("Conversion to usize failed: {e}");
+            Error::NotFoundError
+        })?;
+        match node_array_ptr.cmp(&self.data.len()) {
+            Ordering::Less => {
+                self.data[node_array_ptr] = (node.clone(), hash);
+                Ok(())
+            }
+            Ordering::Equal => {
+                self.data.push((node.clone(), hash));
+                self.total_bytes += get_node_byte_len(node);
+                Ok(())
+            }
+            Ordering::Greater => {
+                error!("Failed to write node bytes: off the end of the buffer");
+                Err(Error::NotFoundError)
+            }
         }
     }
 

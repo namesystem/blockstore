@@ -335,15 +335,7 @@ impl PeerNetwork {
 
         // sort in order by first-contact time (oldest first)
         for (_, stats_list) in ip_neighbor.iter_mut() {
-            stats_list.sort_by(|(_e1, _nk1, stats1), (_e2, _nk2, stats2)| {
-                if stats1.first_contact_time < stats2.first_contact_time {
-                    Ordering::Less
-                } else if stats1.first_contact_time > stats2.first_contact_time {
-                    Ordering::Greater
-                } else {
-                    Ordering::Equal
-                }
-            });
+            stats_list.sort_by_key(|(_e, _nk, stats)| stats.first_contact_time);
         }
 
         let mut to_remove = vec![];

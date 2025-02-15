@@ -18,6 +18,7 @@
 /// various conditions, such as ensuring that the right principals get paid and ensuring that fees
 /// are appropriately distributed.
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::{fs, io};
@@ -706,23 +707,19 @@ fn test_bad_microblock_fees_fix_transition() {
                 coinbase + tx_fees_anchored + tx_fees_streamed_produced + tx_fees_streamed_confirmed
             };
 
-            let expected_reward = if i < 5 {
-                bad_expected_rewards[i - 1]
-            } else if i == 5 {
-                // epoch transition boundary, so no microblock reward at all
-                3600000000 + (2000 + 1000 * i as u128)
-            } else {
-                good_expected_reward
+            let expected_reward = match i.cmp(&5) {
+                Ordering::Less => bad_expected_rewards[i - 1],
+                Ordering::Equal => {
+                    // epoch transition boundary, so no microblock reward at all
+                    3600000000 + (2000 + 1000 * i as u128)
+                }
+                Ordering::Greater => good_expected_reward,
             };
 
             eprintln!(
-                "i = {}, {}, total = {}, good = {}, bad = {}, expected = {}",
-                i,
-                &block_id,
-                matured_reward.total(),
-                good_expected_reward,
-                bad_expected_rewards[i - 1],
-                expected_reward
+                "i = {i}, {block_id}, total = {t}, good = {good_expected_reward}, bad = {b}, expected = {expected_reward}",
+                t=matured_reward.total(),
+                b=bad_expected_rewards[i - 1],
             );
             assert_eq!(expected_reward, matured_reward.total());
         } else {

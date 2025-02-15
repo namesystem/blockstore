@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::cmp;
+use std::cmp::{self, Ordering};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::SocketAddr;
@@ -446,23 +446,24 @@ impl PeerBlocksInv {
                 return Some((i, my_bit, pox_bit));
             }
         }
-        if (pox_id.len() as u64) - 1 == self.num_reward_cycles {
-            // all agreed
-            None
-        } else if (pox_id.len() as u64) - 1 < self.num_reward_cycles {
-            // pox inv is longer
-            Some((
-                (pox_id.len() as u64) - 1,
-                self.has_ith_anchor_block((pox_id.len() as u64) - 1),
-                false,
-            ))
-        } else {
-            // our inv is longer
-            Some((
-                self.num_reward_cycles,
-                false,
-                pox_id.has_ith_anchor_block(self.num_reward_cycles as usize),
-            ))
+        let reward_cycle = (pox_id.len() as u64) - 1;
+        match reward_cycle.cmp(&self.num_reward_cycles) {
+            Ordering::Less => {
+                // pox inv is longer
+                Some((reward_cycle, self.has_ith_anchor_block(reward_cycle), false))
+            }
+            Ordering::Equal => {
+                // all agreed
+                None
+            }
+            Ordering::Greater => {
+                // our inv is longer
+                Some((
+                    self.num_reward_cycles,
+                    false,
+                    pox_id.has_ith_anchor_block(self.num_reward_cycles as usize),
+                ))
+            }
         }
     }
 

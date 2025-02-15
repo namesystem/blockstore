@@ -4875,6 +4875,7 @@ pub mod test {
             }
 
             if first_reward_cycle > 0 && second_reward_cycle == 0 {
+                #[allow(clippy::comparison_chain)]
                 if cur_reward_cycle == first_reward_cycle {
                     test_in_first_reward_cycle = true;
 
@@ -5002,6 +5003,7 @@ pub mod test {
                     assert_eq!(charlie_account.stx_balance.unlock_height() as u128, 0);
                 }
             } else if second_reward_cycle > 0 {
+                #[allow(clippy::comparison_chain)]
                 if cur_reward_cycle == second_reward_cycle {
                     test_in_second_reward_cycle = true;
 
@@ -5484,6 +5486,7 @@ pub mod test {
             }
 
             if reward_cycle > 0 {
+                #[allow(clippy::comparison_chain)]
                 if cur_reward_cycle == reward_cycle {
                     test_in_first_reward_cycle = true;
 
@@ -5510,7 +5513,7 @@ pub mod test {
                     for addr in stacker_addrs.iter() {
                         let (amount_ustx, pox_addr, lock_period, pox_reward_cycle) =
                             get_stacker_info(&mut peer, addr).unwrap();
-                        eprintln!("\naddr {}: {} uSTX stacked for {} cycle(s); addr is {:?}; first reward cycle is {}\n", addr, amount_ustx, lock_period, &pox_addr, reward_cycle);
+                        eprintln!("\naddr {addr}: {amount_ustx} uSTX stacked for {lock_period} cycle(s); addr is {pox_addr:?}; first reward cycle is {reward_cycle}\n");
 
                         assert_eq!(pox_reward_cycle, reward_cycle);
                         assert_eq!(lock_period, 1);

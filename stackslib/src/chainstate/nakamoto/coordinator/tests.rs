@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
@@ -2310,30 +2311,34 @@ pub fn simple_nakamoto_coordinator_10_tenures_10_sortitions<'a>() -> TestPeer<'a
             assert_eq!(matured_reward.parent_miner.coinbase, 1_000_000_000);
         }
 
-        if i < 11 {
-            // epoch2
-            assert_eq!(
-                matured_reward.parent_miner.tx_fees,
-                MinerPaymentTxFees::Epoch2 {
-                    anchored: 0,
-                    streamed: 0,
-                }
-            );
-        } else if i == 11 {
-            // transition
-            assert_eq!(
-                matured_reward.parent_miner.tx_fees,
-                MinerPaymentTxFees::Nakamoto { parent_fees: 0 }
-            );
-        } else {
-            // nakamoto
-            assert_eq!(
-                matured_reward.parent_miner.tx_fees,
-                MinerPaymentTxFees::Nakamoto {
-                    parent_fees: fee_counts[i - 12]
-                }
-            )
-        }
+        match i.cmp(&11) {
+            Ordering::Less => {
+                // epoch2
+                assert_eq!(
+                    matured_reward.parent_miner.tx_fees,
+                    MinerPaymentTxFees::Epoch2 {
+                        anchored: 0,
+                        streamed: 0,
+                    }
+                );
+            }
+            Ordering::Equal => {
+                // transition
+                assert_eq!(
+                    matured_reward.parent_miner.tx_fees,
+                    MinerPaymentTxFees::Nakamoto { parent_fees: 0 }
+                );
+            }
+            Ordering::Greater => {
+                // nakamoto
+                assert_eq!(
+                    matured_reward.parent_miner.tx_fees,
+                    MinerPaymentTxFees::Nakamoto {
+                        parent_fees: fee_counts[i - 12]
+                    }
+                )
+            }
+        };
 
         assert_eq!(matured_reward.latest_miners.len(), 1);
 
@@ -2344,30 +2349,35 @@ pub fn simple_nakamoto_coordinator_10_tenures_10_sortitions<'a>() -> TestPeer<'a
         } else {
             assert_eq!(miner_reward.coinbase, 1_000_000_000);
         }
-        if i < 10 {
-            // epoch2
-            assert_eq!(
-                miner_reward.tx_fees,
-                MinerPaymentTxFees::Epoch2 {
-                    anchored: 0,
-                    streamed: 0,
-                }
-            );
-        } else if i == 10 {
-            // transition
-            assert_eq!(
-                miner_reward.tx_fees,
-                MinerPaymentTxFees::Nakamoto { parent_fees: 0 }
-            )
-        } else {
-            // nakamoto
-            assert_eq!(
-                miner_reward.tx_fees,
-                MinerPaymentTxFees::Nakamoto {
-                    parent_fees: fee_counts[i - 11]
-                }
-            )
-        }
+
+        match i.cmp(&10) {
+            Ordering::Less => {
+                // epoch2
+                assert_eq!(
+                    miner_reward.tx_fees,
+                    MinerPaymentTxFees::Epoch2 {
+                        anchored: 0,
+                        streamed: 0,
+                    }
+                )
+            }
+            Ordering::Equal => {
+                // transition
+                assert_eq!(
+                    miner_reward.tx_fees,
+                    MinerPaymentTxFees::Nakamoto { parent_fees: 0 }
+                )
+            }
+            Ordering::Greater => {
+                // nakamoto
+                assert_eq!(
+                    miner_reward.tx_fees,
+                    MinerPaymentTxFees::Nakamoto {
+                        parent_fees: fee_counts[i - 11]
+                    }
+                )
+            }
+        };
     }
 
     // replay the blocks and sortitions in random order, and verify that we still reach the chain

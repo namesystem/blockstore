@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 
@@ -380,21 +381,25 @@ impl<NC: NeighborComms> StackerDBSync<NC> {
                     continue;
                 };
 
-                if request.slot_version < chunk_inv.slot_versions[i] {
-                    // this peer has a newer view
-                    available.clear();
-                    available.push(naddr.clone());
-                    *request = StackerDBGetChunkData {
-                        contract_id: self.smart_contract_id.clone(),
-                        rc_consensus_hash,
-                        slot_id: i as u32,
-                        slot_version: chunk_inv.slot_versions[i],
-                    };
-                } else if request.slot_version == chunk_inv.slot_versions[i] {
-                    // this peer has the same view as a prior peer.
-                    // just track how many times we see this
-                    available.push(naddr.clone());
-                }
+                match request.slot_version.cmp(&chunk_inv.slot_versions[i]) {
+                    Ordering::Less => {
+                        // this peer has a newer view
+                        available.clear();
+                        available.push(naddr.clone());
+                        *request = StackerDBGetChunkData {
+                            contract_id: self.smart_contract_id.clone(),
+                            rc_consensus_hash,
+                            slot_id: i as u32,
+                            slot_version: chunk_inv.slot_versions[i],
+                        };
+                    }
+                    Ordering::Equal => {
+                        // this peer has the same view as a prior peer.
+                        // just track how many times we see this
+                        available.push(naddr.clone());
+                    }
+                    Ordering::Greater => {}
+                };
             }
         }
 
