@@ -117,7 +117,7 @@ configure_replay_slices() {
 
 	## create a copy of the linked db with <number of CORES><number of RESERVED CORES>
 	##   decrement by 1 since we already have ${SLICE_DIR}0
-	for ((i=1;i<=$( CORES - RESERVED - 1);i++)); do
+	for ((i=1;i<=$(( CORES - RESERVED - 1));i++)); do
 		echo "Copying ${SLICE_DIR}0 -> ${COLYELLOW}${SLICE_DIR}${i}${COLRESET}"
 		cp -R "${SLICE_DIR}0" "${SLICE_DIR}${i}" || {
 			echo "${COLRED}Error${COLRESET} copying ${SLICE_DIR}0 -> ${SLICE_DIR}${i}"
