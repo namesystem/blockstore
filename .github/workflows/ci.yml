@@ -216,6 +216,29 @@ jobs:
       - check-release
     uses: ./.github/workflows/p2p-tests.yml
 
+
+  stacks-signer-tests:
+    if: |
+      needs.check-release.outputs.is_release == 'true' || (
+        github.event_name == 'workflow_dispatch' ||
+        github.event_name == 'pull_request' ||
+        github.event_name == 'merge_group' ||
+        (
+          contains('
+            refs/heads/master
+            refs/heads/develop
+            refs/heads/next
+          ', github.event.pull_request.head.ref) &&
+          github.event_name == 'push'
+        )
+      )
+    name: Stacks Signer Unit Tests
+    needs:
+      - rustfmt
+      - create-cache
+      - check-release
+    uses: ./.github/workflows/stacks-signer-tests.yml
+
   ## Test to run on a tagged release
   ##
   ## Runs when:

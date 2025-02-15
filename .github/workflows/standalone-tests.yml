@@ -25,6 +25,7 @@ on:
           - Slow Tests
           - Stacks-Core Tests
           - SBTC Tests
+          - Stacks-Signer Tests
 
 ## Set the display name to the test being run
 run-name: ${{ inputs.workflow }}
@@ -148,3 +149,19 @@ jobs:
       - create-cache
     uses: ./.github/workflows/sbtc-tests.yml
 
+  ## Runs when:
+  ##   either or of the following:
+  ##     - workflow is 'Release Tests'
+  ##     - workflow is 'CI Tests'
+  ##     - workflow is 'Stacks-Signer Tests'
+  stacks-signer-tests:
+    if: |
+      (
+        inputs.workflow == 'Release Tests' ||
+        inputs.workflow == 'CI Tests' ||
+        inputs.workflow == 'Stacks-Signer Tests'
+      )
+    name: Stacks Signer Tests
+    needs:
+      - create-cache
+    uses: ./.github/workflows/stacks-signer-tests.yml

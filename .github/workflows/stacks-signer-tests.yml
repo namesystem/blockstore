@@ -1,0 +1,30 @@
+## Run Stacks Signer Unit Tests
+name: Tests::Stacks Signer Unit Tests
+
+on:
+  workflow_call:
+
+env:
+  RUST_BACKTRACE: full
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: 3
+  TEST_TIMEOUT: 30
+
+concurrency:
+  group: stacks-core-tests-${{ github.head_ref || github.ref || github.run_id }}
+  # Only cancel in progress if this is for a PR
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      ## Setup test environment
+      - name: Setup Test Environment
+        id: setup_tests
+        uses: stacks-network/actions/stacks-core/testenv@main
+
+      # Run unit tests
+      - name: Run Unit Tests
+        run: cargo test -p stacks-signer -- --nocapture --test-threads 1
+        continue-on-error: true
