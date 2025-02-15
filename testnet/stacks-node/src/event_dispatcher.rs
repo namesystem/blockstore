@@ -425,7 +425,7 @@ impl EventObserver {
         Ok(())
     }
 
-    fn process_pending_payloads(conn: &Connection) {
+    fn process_pending_payloads(&self, conn: &Connection) {
         let pending_payloads = match Self::get_pending_payloads(conn) {
             Ok(payloads) => payloads,
             Err(e) => {
@@ -438,6 +438,10 @@ impl EventObserver {
         };
 
         for (id, url, payload, timeout_ms) in pending_payloads {
+            // If the URL is not the same as the endpoint, skip it
+            if !url.starts_with(&self.endpoint) {
+                continue;
+            }
             let timeout = Duration::from_millis(timeout_ms);
             Self::send_payload_directly(&payload, &url, timeout);
 
@@ -563,7 +567,7 @@ impl EventObserver {
             Self::insert_payload_with_retry(&conn, &full_url, payload, self.timeout);
 
             // Process all pending payloads
-            Self::process_pending_payloads(&conn);
+            self.process_pending_payloads(&conn);
         } else {
             // No database, just send the payload
             Self::send_payload_directly(payload, &full_url, self.timeout);
@@ -2042,16 +2046,19 @@ mod test {
         use mockito::Matcher;
 
         let dir = tempdir().unwrap();
-        let db_path = dir.path().join("test_process_payloads.sqlite");
+        let db_path = dir.path().join("event_observers.sqlite");
         let db_path_str = db_path.to_str().unwrap();
+        let mut server = mockito::Server::new();
+        let endpoint = server.url().to_string();
+        let timeout = Duration::from_secs(5);
+        let observer =
+            EventObserver::new(Some(dir.path().to_path_buf()), endpoint.clone(), timeout);
 
         let conn = EventObserver::init_db(db_path_str).expect("Failed to initialize the database");
 
         let payload = json!({"key": "value"});
         let timeout = Duration::from_secs(5);
 
-        // Create a mock server
-        let mut server = mockito::Server::new();
         let _m = server
             .mock("POST", "/api")
             .match_header("content-type", Matcher::Regex("application/json.*".into()))
@@ -2068,7 +2075,7 @@ mod test {
             .expect("Failed to insert payload");
 
         // Process pending payloads
-        EventObserver::process_pending_payloads(&conn);
+        observer.process_pending_payloads(&conn);
 
         // Verify that the pending payloads list is empty
         let pending_payloads =
@@ -2077,6 +2084,54 @@ mod test {
 
         // Verify that the mock was called
         _m.assert();
+    }
+
+    #[test]
+    fn pending_payloads_are_skipped_if_url_does_not_match() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("event_observers.sqlite");
+        let db_path_str = db_path.to_str().unwrap();
+
+        let mut server = mockito::Server::new();
+        let endpoint = server.url().to_string();
+        let timeout = Duration::from_secs(5);
+        let observer =
+            EventObserver::new(Some(dir.path().to_path_buf()), endpoint.clone(), timeout);
+
+        let conn = EventObserver::init_db(db_path_str).expect("Failed to initialize the database");
+
+        let payload = json!({"key": "value"});
+        let timeout = Duration::from_secs(5);
+
+        let mock = server
+            .mock("POST", "/api")
+            .match_header(
+                "content-type",
+                mockito::Matcher::Regex("application/json.*".into()),
+            )
+            .match_body(mockito::Matcher::Json(payload.clone()))
+            .with_status(200)
+            .expect(0) // Expect 0 calls to this endpoint
+            .create();
+
+        // Use a different URL than the observer's endpoint
+        let url = "http://different-domain.com/api";
+
+        EventObserver::insert_payload(&conn, url, &payload, timeout)
+            .expect("Failed to insert payload");
+
+        observer.process_pending_payloads(&conn);
+
+        let pending_payloads =
+            EventObserver::get_pending_payloads(&conn).expect("Failed to get pending payloads");
+        // Verify that the pending payload is still in the database
+        assert_eq!(
+            pending_payloads.len(),
+            1,
+            "Expected payload to remain in database since URL didn't match"
+        );
+
+        mock.assert();
     }
 
     #[test]
