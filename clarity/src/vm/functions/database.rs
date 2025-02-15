@@ -908,9 +908,8 @@ pub fn special_get_burn_block_info(
     };
 
     // Note: We assume that we will not have a height bigger than u32::MAX.
-    let height_value = match u32::try_from(height_value) {
-        Ok(result) => result,
-        _ => return Ok(Value::none()),
+    let Ok(height_value) = u32::try_from(height_value) else {
+        return Ok(Value::none());
     };
 
     match block_info_prop {

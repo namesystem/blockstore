@@ -1069,35 +1069,41 @@ impl ClarityDatabase<'_> {
     /// block height (i.e. that returned by `get_index_block_header_hash` for
     /// `get_current_block_height`).
     pub fn get_current_burnchain_block_height(&mut self) -> Result<u32> {
-        let cur_stacks_height = self.store.get_current_block_height();
+        let epoch = self.get_clarity_epoch_version()?;
+        match epoch {
+            // Special case to preserve possibly incorrect behavior (inside at-block) in Epoch 3.0
+            StacksEpochId::Epoch30 => {
+                self.burn_state_db
+                    .get_tip_burn_block_height()
+                    .ok_or_else(|| {
+                        InterpreterError::Expect("Failed to get burnchain tip height.".into())
+                            .into()
+                    })
+            }
+            _ => {
+                let cur_stacks_height = self.store.get_current_block_height();
 
-        // Before epoch 3.0, we can only access the burn block associated with the last block
-        if !self
-            .get_clarity_epoch_version()?
-            .clarity_uses_tip_burn_block()
-        {
-            if cur_stacks_height == 0 {
-                return Ok(self.burn_state_db.get_burn_start_height());
-            };
-            // Safety note: normal subtraction is safe here, because we've already checked
-            // that cur_stacks_height > 0.
-            let last_mined_bhh = self.get_index_block_header_hash(cur_stacks_height - 1)?;
+                // Before epoch 3.0, we can only access the burn block associated with the last block
+                let last_mined_bhh = if epoch.clarity_uses_tip_burn_block() {
+                    // In epoch 3+, we can access the current burnchain block
+                    self.get_index_block_header_hash(cur_stacks_height)
+                        .or_else(|_| self.get_index_block_header_hash(cur_stacks_height - 1))?
+                } else if cur_stacks_height == 0 {
+                    return Ok(self.burn_state_db.get_burn_start_height());
+                } else {
+                    // Safety note: normal subtraction is safe here, because we've already checked
+                    // that cur_stacks_height > 0.
+                    self.get_index_block_header_hash(cur_stacks_height - 1)?
+                };
 
-            self.get_burnchain_block_height(&last_mined_bhh)
-                .ok_or_else(|| {
-                    InterpreterError::Expect(format!(
-                        "Block header hash '{}' must return for provided stacks block height {}",
-                        &last_mined_bhh, cur_stacks_height
-                    ))
-                    .into()
-                })
-        } else {
-            // In epoch 3+, we can access the current burnchain block
-            self.burn_state_db
-                .get_tip_burn_block_height()
-                .ok_or_else(|| {
-                    InterpreterError::Expect("Failed to get burnchain tip height.".into()).into()
-                })
+                self.get_burnchain_block_height(&last_mined_bhh)
+                    .ok_or_else(|| {
+                        InterpreterError::Expect(format!(
+                            "Block header hash '{last_mined_bhh}' must return for provided stacks block height {cur_stacks_height}"
+                        ))
+                        .into()
+                    })
+            }
         }
     }
 
