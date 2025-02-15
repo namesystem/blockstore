@@ -229,6 +229,16 @@ paths:
           description: The Stacks chain tip to query from. If tip == latest, the query will be run from the latest
             known tip (includes unconfirmed state).
           required: false
+        - name: cost_tracker
+          in: query
+          schema:
+            type: string
+            enum:
+              - mid_block
+              - free
+            default: mid_block
+          description: The type of CostTracker to use when executing the contract.
+          required: false
       requestBody:
         description: map of arguments and the simulated tx-sender where sender is either a Contract identifier or a normal Stacks address, and arguments is an array of hex serialized Clarity values.
         required: true

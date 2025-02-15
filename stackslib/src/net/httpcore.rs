@@ -102,6 +102,36 @@ impl From<&str> for TipRequest {
     }
 }
 
+/// All representations of the `cost_tracker=` query parameter value;
+/// Each value corresponds to a different choice of construction of a cost tracker
+/// (implementing clarity::vm::costs::CostTracker).
+#[derive(Debug, Clone, PartialEq)]
+pub enum CostTracker {
+    /// Use LimitedCostTracker::Free
+    Free,
+    /// Use LimitedCostTracker:new_mid_block
+    MidBlock,
+}
+
+impl fmt::Display for CostTracker {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Free => write!(f, "free"),
+            Self::MidBlock => write!(f, "mid_block"),
+        }
+    }
+}
+
+impl From<&str> for CostTracker {
+    fn from(s: &str) -> CostTracker {
+        match s {
+            "free" => CostTracker::Free,
+            "mid_block" => CostTracker::MidBlock,
+            _ => CostTracker::MidBlock,
+        }
+    }
+}
+
 /// Extension to HttpRequestPreamble to give it awareness of Stacks-specific fields
 pub trait HttpPreambleExtensions {
     /// Set the node's canonical Stacks chain tip
@@ -303,6 +333,8 @@ pub trait HttpRequestContentsExtensions {
     fn for_tip(self, tip_req: TipRequest) -> Self;
     /// Identify the tip request
     fn tip_request(&self) -> TipRequest;
+    /// Identify the cost tracker (e.g. when executing a contract)
+    fn get_cost_tracker(&self) -> CostTracker;
     /// Determine if we should return a MARF proof
     fn get_with_proof(&self) -> bool;
 }
@@ -329,6 +361,14 @@ impl HttpRequestContentsExtensions for HttpRequestContents {
             .get("tip")
             .map(|tip| tip.as_str().into())
             .unwrap_or(TipRequest::UseLatestAnchoredTip)
+    }
+
+    // Get the cost_tracker= query parameter value
+    fn get_cost_tracker(&self) -> CostTracker {
+        self.get_query_args()
+            .get("cost_tracker")
+            .map(|cost_tracker| cost_tracker.as_str().into())
+            .unwrap_or(CostTracker::MidBlock)
     }
 
     /// Get the proof= query parameter value

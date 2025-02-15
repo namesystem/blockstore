@@ -28,8 +28,8 @@ use crate::core::BLOCK_LIMIT_MAINNET_21;
 use crate::net::api::*;
 use crate::net::connection::ConnectionOptions;
 use crate::net::httpcore::{
-    HttpPreambleExtensions, HttpRequestContentsExtensions, RPCRequestHandler, StacksHttp,
-    StacksHttpRequest,
+    CostTracker, HttpPreambleExtensions, HttpRequestContentsExtensions, RPCRequestHandler,
+    StacksHttp, StacksHttpRequest,
 };
 use crate::net::{ProtocolFamily, TipRequest};
 
@@ -49,6 +49,7 @@ fn test_try_parse_request() {
         "ro-test".try_into().unwrap(),
         vec![],
         TipRequest::SpecificTip(StacksBlockId([0x22; 32])),
+        CostTracker::MidBlock,
     );
     assert_eq!(
         request.contents().tip_request(),
@@ -121,6 +122,7 @@ fn test_try_make_response() {
         "ro-confirmed".try_into().unwrap(),
         vec![],
         TipRequest::UseLatestAnchoredTip,
+        CostTracker::MidBlock,
     );
     requests.push(request);
 
@@ -136,6 +138,7 @@ fn test_try_make_response() {
         "ro-test".try_into().unwrap(),
         vec![],
         TipRequest::UseLatestUnconfirmedTip,
+        CostTracker::MidBlock,
     );
     requests.push(request);
 
@@ -151,6 +154,7 @@ fn test_try_make_response() {
         "does-not-exist".try_into().unwrap(),
         vec![],
         TipRequest::UseLatestUnconfirmedTip,
+        CostTracker::MidBlock,
     );
     requests.push(request);
 
@@ -166,6 +170,7 @@ fn test_try_make_response() {
         "ro-test".try_into().unwrap(),
         vec![],
         TipRequest::UseLatestUnconfirmedTip,
+        CostTracker::MidBlock,
     );
     requests.push(request);
 
@@ -181,6 +186,23 @@ fn test_try_make_response() {
         "ro-confirmed".try_into().unwrap(),
         vec![],
         TipRequest::SpecificTip(StacksBlockId([0x11; 32])),
+        CostTracker::MidBlock,
+    );
+    requests.push(request);
+
+    // query confirmed tip with free cost tracker
+    let request = StacksHttpRequest::new_callreadonlyfunction(
+        addr.into(),
+        StacksAddress::from_string("ST2DS4MSWSGJ3W9FBC6BVT0Y92S345HY8N3T6AV7R").unwrap(),
+        "hello-world".try_into().unwrap(),
+        StacksAddress::from_string("ST2DS4MSWSGJ3W9FBC6BVT0Y92S345HY8N3T6AV7R")
+            .unwrap()
+            .to_account_principal(),
+        None,
+        "ro-confirmed".try_into().unwrap(),
+        vec![],
+        TipRequest::UseLatestAnchoredTip,
+        CostTracker::Free,
     );
     requests.push(request);
 
@@ -270,4 +292,25 @@ fn test_try_make_response() {
 
     let (preamble, payload) = response.destruct();
     assert_eq!(preamble.status_code, 404);
+
+    // confirmed tip with free cost tracker (same test conditions as confirmed tip)
+    let response = responses.remove(0);
+    debug!(
+        "Response:\n{}\n",
+        std::str::from_utf8(&response.try_serialize().unwrap()).unwrap()
+    );
+
+    assert_eq!(
+        response.preamble().get_canonical_stacks_tip_height(),
+        Some(1)
+    );
+
+    let resp = response.decode_call_readonly_response().unwrap();
+
+    assert!(resp.okay);
+    assert!(resp.result.is_some());
+    assert!(resp.cause.is_none());
+
+    // u1
+    assert_eq!(resp.result.unwrap(), "0x0100000000000000000000000000000001");
 }

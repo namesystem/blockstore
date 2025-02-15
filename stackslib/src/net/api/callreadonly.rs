@@ -48,8 +48,8 @@ use crate::net::http::{
     HttpResponseContents, HttpResponsePayload, HttpResponsePreamble, HttpServerError,
 };
 use crate::net::httpcore::{
-    request, HttpPreambleExtensions, HttpRequestContentsExtensions, RPCRequestHandler, StacksHttp,
-    StacksHttpRequest, StacksHttpResponse,
+    request, CostTracker, HttpPreambleExtensions, HttpRequestContentsExtensions, RPCRequestHandler,
+    StacksHttp, StacksHttpRequest, StacksHttpResponse,
 };
 use crate::net::p2p::PeerNetwork;
 use crate::net::{Error as NetError, StacksNodeState, TipRequest};
@@ -202,6 +202,8 @@ impl RPCRequestHandler for RPCCallReadOnlyRequestHandler {
             }
         };
 
+        let cost_tracker = contents.get_cost_tracker();
+
         let contract_identifier = self
             .contract_identifier
             .take()
@@ -230,24 +232,31 @@ impl RPCRequestHandler for RPCCallReadOnlyRequestHandler {
 
                 let mainnet = chainstate.mainnet;
                 let chain_id = chainstate.chain_id;
-                let mut cost_limit = self.read_only_call_limit.clone();
-                cost_limit.write_length = 0;
-                cost_limit.write_count = 0;
 
                 chainstate.maybe_read_only_clarity_tx(
                     &sortdb.index_handle_at_block(chainstate, &tip)?,
                     &tip,
                     |clarity_tx| {
-                        let epoch = clarity_tx.get_epoch();
-                        let cost_track = clarity_tx
-                            .with_clarity_db_readonly(|clarity_db| {
-                                LimitedCostTracker::new_mid_block(
-                                    mainnet, chain_id, cost_limit, clarity_db, epoch,
-                                )
-                            })
-                            .map_err(|_| {
-                                ClarityRuntimeError::from(InterpreterError::CostContractLoadFailure)
-                            })?;
+                        let cost_track = match cost_tracker {
+                            CostTracker::Free => LimitedCostTracker::Free,
+                            CostTracker::MidBlock => {
+                                let epoch = clarity_tx.get_epoch();
+                                let mut cost_limit = self.read_only_call_limit.clone();
+                                cost_limit.write_length = 0;
+                                cost_limit.write_count = 0;
+                                clarity_tx
+                                    .with_clarity_db_readonly(|clarity_db| {
+                                        LimitedCostTracker::new_mid_block(
+                                            mainnet, chain_id, cost_limit, clarity_db, epoch,
+                                        )
+                                    })
+                                    .map_err(|_| {
+                                        ClarityRuntimeError::from(
+                                            InterpreterError::CostContractLoadFailure,
+                                        )
+                                    })?
+                            }
+                        };
 
                         let clarity_version = clarity_tx
                             .with_analysis_db_readonly(|analysis_db| {
@@ -355,6 +364,7 @@ impl StacksHttpRequest {
         function_name: ClarityName,
         function_args: Vec<Value>,
         tip_req: TipRequest,
+        cost_tracker: CostTracker,
     ) -> StacksHttpRequest {
         StacksHttpRequest::new_for_peer(
             host,
@@ -363,14 +373,17 @@ impl StacksHttpRequest {
                 "/v2/contracts/call-read/{}/{}/{}",
                 &contract_addr, &contract_name, &function_name
             ),
-            HttpRequestContents::new().for_tip(tip_req).payload_json(
-                serde_json::to_value(CallReadOnlyRequestBody {
-                    sender: sender.to_string(),
-                    sponsor: sponsor.map(|s| s.to_string()),
-                    arguments: function_args.into_iter().map(|v| v.to_string()).collect(),
-                })
-                .expect("FATAL: failed to encode infallible data"),
-            ),
+            HttpRequestContents::new()
+                .for_tip(tip_req)
+                .query_arg("cost_tracker".to_string(), cost_tracker.to_string())
+                .payload_json(
+                    serde_json::to_value(CallReadOnlyRequestBody {
+                        sender: sender.to_string(),
+                        sponsor: sponsor.map(|s| s.to_string()),
+                        arguments: function_args.into_iter().map(|v| v.to_string()).collect(),
+                    })
+                    .expect("FATAL: failed to encode infallible data"),
+                ),
         )
         .expect("FATAL: failed to construct request from infallible data")
     }

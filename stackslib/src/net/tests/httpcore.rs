@@ -44,8 +44,8 @@ use crate::net::http::{
     HttpResponsePreamble, HttpVersion, HTTP_PREAMBLE_MAX_NUM_HEADERS,
 };
 use crate::net::httpcore::{
-    send_http_request, HttpPreambleExtensions, HttpRequestContentsExtensions, StacksHttp,
-    StacksHttpMessage, StacksHttpPreamble, StacksHttpRequest, StacksHttpResponse,
+    send_http_request, CostTracker, HttpPreambleExtensions, HttpRequestContentsExtensions,
+    StacksHttp, StacksHttpMessage, StacksHttpPreamble, StacksHttpRequest, StacksHttpResponse,
 };
 use crate::net::rpc::ConversationHttp;
 use crate::net::{ProtocolFamily, TipRequest};
@@ -970,6 +970,45 @@ fn test_http_parse_proof_tip_query() {
         .query_string(Some(query_txt_none))
         .tip_request();
     assert_eq!(tip_req, TipRequest::UseLatestAnchoredTip);
+}
+
+#[test]
+fn test_http_parse_cost_tracker_query() {
+    // parses free cost tracker
+    match HttpRequestContents::new()
+        .query_string(Some("cost_tracker=free"))
+        .get_cost_tracker()
+    {
+        CostTracker::Free => {}
+        _ => panic!(),
+    }
+
+    // parses mid_block cost tracker
+    match HttpRequestContents::new()
+        .query_string(Some("cost_tracker=mid_block"))
+        .get_cost_tracker()
+    {
+        CostTracker::MidBlock => {}
+        _ => panic!(),
+    }
+
+    // defaults to mid block for malformed cost tracker
+    match HttpRequestContents::new()
+        .query_string(Some("cost_tracker=bad"))
+        .get_cost_tracker()
+    {
+        CostTracker::MidBlock => {}
+        _ => panic!(),
+    }
+
+    // defaults to mid block for missing cost tracker
+    match HttpRequestContents::new()
+        .query_string(Some("cost_tracker="))
+        .get_cost_tracker()
+    {
+        CostTracker::MidBlock => {}
+        _ => panic!(),
+    }
 }
 
 #[test]
