@@ -915,6 +915,7 @@ impl Config {
                         endpoint: observer.endpoint,
                         events_keys,
                         timeout_ms: observer.timeout_ms.unwrap_or(1_000),
+                        lossy: observer.lossy.unwrap_or(false),
                     });
                 }
                 observers
@@ -928,6 +929,7 @@ impl Config {
                 endpoint: val,
                 events_keys: vec![EventKeyType::AnyEvent],
                 timeout_ms: 1_000,
+                lossy: false,
             });
         };
 
@@ -2824,6 +2826,7 @@ pub struct EventObserverConfigFile {
     pub endpoint: String,
     pub events_keys: Vec<String>,
     pub timeout_ms: Option<u64>,
+    pub lossy: Option<bool>,
 }
 
 #[derive(Clone, Default, Debug, Hash, PartialEq, Eq, PartialOrd)]
@@ -2831,6 +2834,7 @@ pub struct EventObserverConfig {
     pub endpoint: String,
     pub events_keys: Vec<EventKeyType>,
     pub timeout_ms: u64,
+    pub lossy: bool,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd)]

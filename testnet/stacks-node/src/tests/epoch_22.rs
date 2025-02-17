@@ -644,6 +644,7 @@ fn pox_2_unlock_all() {
         endpoint: format!("localhost:{}", test_observer::EVENT_OBSERVER_PORT),
         events_keys: vec![EventKeyType::AnyEvent],
         timeout_ms: 1000,
+        lossy: false,
     });
     conf.initial_balances.append(&mut initial_balances);
 

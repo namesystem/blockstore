@@ -657,6 +657,7 @@ pub mod test_observer {
             endpoint: format!("localhost:{EVENT_OBSERVER_PORT}"),
             events_keys: event_keys.to_vec(),
             timeout_ms: 1000,
+            lossy: false,
         });
     }
 
@@ -7490,6 +7491,7 @@ fn atlas_integration_test() {
             endpoint: format!("localhost:{}", test_observer::EVENT_OBSERVER_PORT),
             events_keys: vec![EventKeyType::AnyEvent],
             timeout_ms: 1000,
+            lossy: false,
         });
 
     conf_follower_node.node.always_use_affirmation_maps = false;
@@ -8023,6 +8025,7 @@ fn antientropy_integration_test() {
             endpoint: format!("localhost:{}", test_observer::EVENT_OBSERVER_PORT),
             events_keys: vec![EventKeyType::AnyEvent],
             timeout_ms: 1000,
+            lossy: false,
         });
 
     conf_follower_node.node.mine_microblocks = true;
