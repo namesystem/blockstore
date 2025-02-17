@@ -25,8 +25,8 @@ pub use clarity::vm::clarity::{ClarityConnection, Error};
 use clarity::vm::contexts::{AssetMap, Environment, OwnedEnvironment};
 use clarity::vm::costs::{CostTracker, ExecutionCost, LimitedCostTracker};
 use clarity::vm::database::{
-    BurnStateDB, ClarityDatabase, HeadersDB, RollbackWrapper, RollbackWrapperPersistedLog,
-    STXBalance, SqliteConnection, NULL_BURN_STATE_DB, NULL_HEADER_DB,
+    BurnStateDB, ClarityBackingStore, ClarityDatabase, HeadersDB, RollbackWrapper,
+    RollbackWrapperPersistedLog, STXBalance, SqliteConnection, NULL_BURN_STATE_DB, NULL_HEADER_DB,
 };
 use clarity::vm::errors::Error as InterpreterError;
 use clarity::vm::representations::SymbolicExpression;
@@ -132,13 +132,38 @@ pub struct ClarityBlockConnection<'a, 'b> {
 ///   rollback the transaction by dropping this struct.
 pub struct ClarityTransactionConnection<'a, 'b> {
     log: Option<RollbackWrapperPersistedLog>,
-    store: &'a mut WritableMarfStore<'b>,
+    store: &'b mut dyn ClarityBackingStore,
     header_db: &'a dyn HeadersDB,
     burn_state_db: &'a dyn BurnStateDB,
     cost_track: &'a mut Option<LimitedCostTracker>,
     mainnet: bool,
     chain_id: u32,
     epoch: StacksEpochId,
+}
+
+impl<'a, 'b> ClarityTransactionConnection<'a, 'b> {
+    pub fn new(
+        store: &'b mut dyn ClarityBackingStore,
+        header_db: &'a dyn HeadersDB,
+        burn_state_db: &'a dyn BurnStateDB,
+        cost_track: &'a mut Option<LimitedCostTracker>,
+        mainnet: bool,
+        chain_id: u32,
+        epoch: StacksEpochId,
+    ) -> ClarityTransactionConnection<'a, 'b> {
+        let mut log = RollbackWrapperPersistedLog::new();
+        log.nest();
+        ClarityTransactionConnection {
+            log: Some(log),
+            store,
+            header_db,
+            burn_state_db,
+            cost_track,
+            mainnet,
+            chain_id,
+            epoch,
+        }
+    }
 }
 
 pub struct ClarityReadOnlyConnection<'a> {
@@ -1565,7 +1590,7 @@ impl<'a> ClarityBlockConnection<'a, '_> {
         })
     }
 
-    pub fn start_transaction_processing<'c>(&'c mut self) -> ClarityTransactionConnection<'c, 'a> {
+    pub fn start_transaction_processing<'c>(&'c mut self) -> ClarityTransactionConnection<'c, 'c> {
         let store = &mut self.datastore;
         let cost_track = &mut self.cost_track;
         let header_db = self.header_db;
