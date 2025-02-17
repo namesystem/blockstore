@@ -141,6 +141,31 @@ pub struct ClarityTransactionConnection<'a, 'b> {
     epoch: StacksEpochId,
 }
 
+impl<'a, 'b> ClarityTransactionConnection<'a, 'b> {
+    pub fn new(
+        store: &'b mut dyn ClarityBackingStore,
+        header_db: &'a dyn HeadersDB,
+        burn_state_db: &'a dyn BurnStateDB,
+        cost_track: &'a mut Option<LimitedCostTracker>,
+        mainnet: bool,
+        chain_id: u32,
+        epoch: StacksEpochId,
+    ) -> ClarityTransactionConnection<'a, 'b> {
+        let mut log = RollbackWrapperPersistedLog::new();
+        log.nest();
+        ClarityTransactionConnection {
+            log: Some(log),
+            store,
+            header_db,
+            burn_state_db,
+            cost_track,
+            mainnet,
+            chain_id,
+            epoch,
+        }
+    }
+}
+
 pub struct ClarityReadOnlyConnection<'a> {
     datastore: ReadOnlyMarfStore<'a>,
     header_db: &'a dyn HeadersDB,
