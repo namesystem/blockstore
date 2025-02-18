@@ -2258,6 +2258,7 @@ impl StacksBlockBuilder {
                     ..
                 })
             ) {
+                debug!("PRINT HERE : {:?}", tx.payload);
                 info!("Nakamoto miner heuristic: during tenure change blocks, produce a fast short block to begin tenure");
                 return Ok((false, tx_events));
             }

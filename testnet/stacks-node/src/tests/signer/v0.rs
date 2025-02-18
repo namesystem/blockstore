@@ -711,7 +711,7 @@ impl MultipleMinerTest {
         sortdb: &SortitionDB,
         cause: TenureChangeCause,
         timeout_secs: u64,
-    ) -> Result<(), String> {
+    ) -> Result<serde_json::Value, String> {
         let start = Instant::now();
         let stacks_height_before = self.get_peer_stacks_tip_height();
         self.mine_bitcoin_blocks_and_confirm(sortdb, 1, timeout_secs)?;
@@ -939,7 +939,8 @@ fn wait_for_tenure_change_tx(
     timeout_secs: u64,
     cause: TenureChangeCause,
     expected_height: u64,
-) -> Result<(), String> {
+) -> Result<serde_json::Value, String> {
+    let mut result = None;
     wait_for(timeout_secs, || {
         let blocks = test_observer::get_blocks();
         for block in blocks {
@@ -954,6 +955,7 @@ fn wait_for_tenure_change_tx(
                     if let TransactionPayload::TenureChange(payload) = &parsed.payload {
                         if payload.cause == cause {
                             info!("Found tenure change transaction: {parsed:?}");
+                            result = Some(block);
                             return Ok(true);
                         }
                     }
@@ -961,7 +963,8 @@ fn wait_for_tenure_change_tx(
             }
         }
         Ok(false)
-    })
+    })?;
+    Ok(result.unwrap())
 }
 
 /// Waits for a block proposal to be observed in the test_observer stackerdb chunks at the expected height
@@ -3026,9 +3029,10 @@ fn tenure_extend_with_other_transactions() {
     let idle_timeout = Duration::from_secs(30);
     let mut signer_test: SignerTest<SpawnedSigner> = SignerTest::new_with_config_modifications(
         num_signers,
-        vec![(sender_addr, send_amt + send_fee)],
+        vec![(sender_addr, (send_amt + send_fee) * 2)],
         |config| {
             config.tenure_idle_timeout = idle_timeout;
+            config.tenure_idle_timeout_buffer = Duration::from_secs(1);
         },
         |config| {
             config.miner.tenure_extend_cost_threshold = 0;
@@ -3036,6 +3040,8 @@ fn tenure_extend_with_other_transactions() {
         None,
         None,
     );
+    let miner_sk = signer_test.running_nodes.conf.miner.mining_key.unwrap();
+    let miner_pk = StacksPublicKey::from_private(&miner_sk);
     let http_origin = format!("http://{}", &signer_test.running_nodes.conf.node.rpc_bind);
 
     signer_test.boot_to_epoch_3();
@@ -3046,65 +3052,62 @@ fn tenure_extend_with_other_transactions() {
     info!("Pause miner so it doesn't propose a block before the tenure extend");
     TEST_MINE_STALL.set(true);
 
-    // Submit a transaction to be included with the tenure extend
+    info!("---- Trigger a block proposal but pause its broadcast ----");
+    let stacks_tip_height = get_chain_info(&signer_test.running_nodes.conf).stacks_tip_height;
+    // Submit a transaction to force a response from signers that indicate that the tenure extend timeout is exceeded
+    let mut sender_nonce = 0;
     let transfer_tx = make_stacks_transfer(
         &sender_sk,
-        0,
+        sender_nonce,
         send_fee,
         signer_test.running_nodes.conf.burnchain.chain_id,
         &recipient,
         send_amt,
     );
-    let _tx = submit_tx(&http_origin, &transfer_tx);
+    let _ = submit_tx(&http_origin, &transfer_tx);
+    sender_nonce += 1;
 
-    info!("---- Wait for tenure extend timeout ----");
-
-    sleep_ms(idle_timeout.as_millis() as u64 + 1000);
-
-    info!("---- Resume miner to propose a block with the tenure extend ----");
+    TEST_BROADCAST_PROPOSAL_STALL.set(vec![miner_pk]);
     TEST_MINE_STALL.set(false);
 
-    // Now, wait for a block with a tenure extend
-    wait_for(idle_timeout.as_secs() + 10, || {
-        let blocks = test_observer::get_blocks();
-        let last_block = &blocks.last().unwrap();
-        let transactions = last_block["transactions"].as_array().unwrap();
-        let (first_tx, other_txs) = transactions.split_first().unwrap();
-        let raw_tx = first_tx["raw_tx"].as_str().unwrap();
-        let tx_bytes = hex_bytes(&raw_tx[2..]).unwrap();
-        let parsed = StacksTransaction::consensus_deserialize(&mut &tx_bytes[..]).unwrap();
-        let found_tenure_extend = match &parsed.payload {
-            TransactionPayload::TenureChange(payload)
-                if payload.cause == TenureChangeCause::Extended =>
-            {
-                info!("Found tenure extend transaction: {parsed:?}");
-                true
-            }
-            _ => false,
-        };
-        if found_tenure_extend {
-            let found_transfer = other_txs.iter().any(|tx| {
-                let raw_tx = tx["raw_tx"].as_str().unwrap();
-                let tx_bytes = hex_bytes(&raw_tx[2..]).unwrap();
-                let parsed = StacksTransaction::consensus_deserialize(&mut &tx_bytes[..]).unwrap();
-                match &parsed.payload {
-                    TransactionPayload::TokenTransfer(..) => true,
-                    _ => false,
-                }
-            });
-            if found_transfer {
-                info!("Found transfer transaction");
-                Ok(true)
-            } else {
-                Err("No transfer transaction found together with the tenure extend".to_string())
-            }
-        } else {
-            info!("No tenure change transaction found");
-            Ok(false)
-        }
-    })
-    .expect("Timed out waiting for a block with a tenure extend");
+    info!("---- Wait for tenure extend timeout ----");
+    sleep_ms(idle_timeout.as_millis() as u64 + 5);
 
+    TEST_MINE_STALL.set(true);
+    TEST_BROADCAST_PROPOSAL_STALL.set(vec![]);
+    // Submit a transaction to be included with the tenure extend
+    let transfer_tx = make_stacks_transfer(
+        &sender_sk,
+        sender_nonce,
+        send_fee,
+        signer_test.running_nodes.conf.burnchain.chain_id,
+        &recipient,
+        send_amt,
+    );
+    let to_find = submit_tx(&http_origin, &transfer_tx);
+
+    info!("---- Resume miner to propose a block with the tenure extend and transfer tx ----");
+    TEST_MINE_STALL.set(false);
+    // Now, wait for a block with a tenure extend
+    let block = wait_for_tenure_change_tx(
+        idle_timeout.as_secs() + 10,
+        TenureChangeCause::Extended,
+        stacks_tip_height + 2,
+    )
+    .expect("Timed out waiting for a block with a tenure extend");
+    let transactions = block["transactions"].as_array().unwrap();
+    assert_eq!(
+        transactions.len(),
+        2,
+        "Expected 2 transactions in the block"
+    );
+    let tx = transactions[1].as_object().unwrap();
+    let txid = tx["txid"].as_str().unwrap();
+    assert_eq!(
+        txid[2..],
+        to_find,
+        "Expected the transfer tx to be the second transaction in the block"
+    );
     signer_test.shutdown();
 }
 
