@@ -17,6 +17,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::mem::replace;
+use std::time::Instant;
 
 use hashbrown::{HashMap, HashSet};
 use serde::Serialize;
@@ -199,6 +200,7 @@ pub struct GlobalContext<'a, 'hooks> {
     /// This is the chain ID of the transaction
     pub chain_id: u32,
     pub eval_hooks: Option<Vec<&'hooks mut dyn EvalHook>>,
+    pub execution_time_tracker: Instant,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1544,6 +1546,7 @@ impl<'a, 'hooks> GlobalContext<'a, 'hooks> {
             epoch_id,
             chain_id,
             eval_hooks: None,
+            execution_time_tracker: Instant::now(),
         }
     }
 

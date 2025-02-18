@@ -634,6 +634,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serde_stacker",
+ "serial_test",
  "slog",
  "stacks-common",
  "time 0.2.27",

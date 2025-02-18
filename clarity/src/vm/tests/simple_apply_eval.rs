@@ -14,8 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::time::Duration;
+
 use rstest::rstest;
 use rstest_reuse::{self, *};
+use serial_test::serial;
 use stacks_common::address::{
     AddressHashMode, C32_ADDRESS_VERSION_MAINNET_SINGLESIG, C32_ADDRESS_VERSION_TESTNET_SINGLESIG,
 };
@@ -39,6 +42,7 @@ use crate::vm::types::{
 use crate::vm::{
     eval, execute as vm_execute, execute_v2 as vm_execute_v2, execute_with_parameters, CallStack,
     ClarityVersion, ContractContext, Environment, GlobalContext, LocalContext, Value,
+    MAX_EXECUTION_TIME_SECS, TEST_MAX_EXECUTION_TIME,
 };
 
 #[test]
@@ -1762,4 +1766,17 @@ fn test_chain_id() {
                 .unwrap()
             )
         });
+}
+
+#[test]
+#[serial]
+fn test_execution_time_expiration() {
+    *TEST_MAX_EXECUTION_TIME.lock().unwrap() = Duration::from_secs(0);
+
+    assert_eq!(
+        vm_execute("(+ 1 1)").err().unwrap(),
+        CheckErrors::ExecutionTimeExpired.into()
+    );
+
+    *TEST_MAX_EXECUTION_TIME.lock().unwrap() = Duration::from_secs(MAX_EXECUTION_TIME_SECS);
 }

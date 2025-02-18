@@ -54,6 +54,7 @@ pub mod test_util;
 pub mod clarity;
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use serde_json;
 use stacks_common::types::StacksEpochId;
@@ -86,6 +87,11 @@ use crate::vm::types::{PrincipalData, TypeSignature};
 pub use crate::vm::version::ClarityVersion;
 
 pub const MAX_CALL_STACK_DEPTH: usize = 64;
+pub const MAX_EXECUTION_TIME_SECS: u64 = 30;
+
+#[cfg(test)]
+static TEST_MAX_EXECUTION_TIME: std::sync::Mutex<Duration> =
+    std::sync::Mutex::new(Duration::from_secs(MAX_EXECUTION_TIME_SECS));
 
 #[derive(Debug, Clone)]
 pub struct ParsedContract {
@@ -303,6 +309,16 @@ pub fn apply(
     }
 }
 
+#[cfg(not(test))]
+fn check_max_execution_time_expired(global_context: &GlobalContext) -> bool {
+    global_context.execution_time_tracker.elapsed() > Duration::from_secs(MAX_EXECUTION_TIME_SECS)
+}
+
+#[cfg(test)]
+fn check_max_execution_time_expired(global_context: &GlobalContext) -> bool {
+    global_context.execution_time_tracker.elapsed() > *TEST_MAX_EXECUTION_TIME.lock().unwrap()
+}
+
 pub fn eval(
     exp: &SymbolicExpression,
     env: &mut Environment,
@@ -311,6 +327,15 @@ pub fn eval(
     use crate::vm::representations::SymbolicExpressionType::{
         Atom, AtomValue, Field, List, LiteralValue, TraitReference,
     };
+
+    if check_max_execution_time_expired(env.global_context) {
+        warn!(
+            "ExecutionTime expired while running {:?} ({:?} elapsed)",
+            exp,
+            env.global_context.execution_time_tracker.elapsed()
+        );
+        return Err(CheckErrors::ExecutionTimeExpired.into());
+    }
 
     if let Some(mut eval_hooks) = env.global_context.eval_hooks.take() {
         for hook in eval_hooks.iter_mut() {

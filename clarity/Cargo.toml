@@ -47,6 +47,7 @@ mutants = "0.0.3"
 # a nightly rustc regression (35dbef235 2021-03-02) prevents criterion from compiling
 #  but it isn't necessary for tests: only benchmarks. therefore, commenting out for now.
 # criterion = "0.3"
+serial_test = "3.2.0"
 
 [features]
 default = ["canonical"]
