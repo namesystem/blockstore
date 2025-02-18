@@ -391,7 +391,7 @@ impl StackerDBListener {
                             "signer_weight" => signer_entry.weight,
                             "total_weight_signed" => block.total_weight_signed,
                             "reason" => rejected_data.reason,
-                            "reason_code" => %rejected_data.reason_code,
+                            "reason_code" => ?rejected_data.reason_code,
                             "tenure_extend_timestamp" => rejected_data.response_data.tenure_extend_timestamp,
                             "server_version" => rejected_data.metadata.server_version,
                         );

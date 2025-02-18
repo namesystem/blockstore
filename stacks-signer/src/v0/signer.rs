@@ -28,7 +28,7 @@ use clarity::util::hash::{MerkleHashFunc, Sha512Trunc256Sum};
 use clarity::util::secp256k1::Secp256k1PublicKey;
 use libsigner::v0::messages::{
     BlockAccepted, BlockRejection, BlockResponse, MessageSlotID, MockProposal, MockSignature,
-    RejectCode, SignerMessage,
+    RejectReason, RejectReasonPrefix, SignerMessage,
 };
 use libsigner::{BlockProposal, SignerEvent};
 use slog::{slog_debug, slog_error, slog_info, slog_warn};
@@ -37,7 +37,7 @@ use stacks_common::util::get_epoch_time_secs;
 use stacks_common::util::secp256k1::MessageSignature;
 use stacks_common::{debug, error, info, warn};
 
-use crate::chainstate::{ProposalEvalConfig, SortitionsView};
+use crate::chainstate::{ProposalEvalConfig, SortitionMinerStatus, SortitionsView};
 use crate::client::{ClientError, SignerSlotID, StackerDB, StacksClient};
 use crate::config::{SignerConfig, SignerConfigMode};
 use crate::runloop::SignerResult;
@@ -165,7 +165,11 @@ impl SignerTrait<SignerMessage> for Signer {
         match event {
             SignerEvent::BlockValidationResponse(block_validate_response) => {
                 debug!("{self}: Received a block proposal result from the stacks node...");
-                self.handle_block_validate_response(stacks_client, block_validate_response)
+                self.handle_block_validate_response(
+                    stacks_client,
+                    block_validate_response,
+                    sortition_state,
+                )
             }
             SignerEvent::SignerMessages(_signer_set, messages) => {
                 debug!(
@@ -177,7 +181,7 @@ impl SignerTrait<SignerMessage> for Signer {
                     let SignerMessage::BlockResponse(block_response) = message else {
                         continue;
                     };
-                    self.handle_block_response(stacks_client, block_response);
+                    self.handle_block_response(stacks_client, block_response, sortition_state);
                 }
             }
             SignerEvent::MinerMessages(messages, miner_pubkey) => {
@@ -342,7 +346,7 @@ impl Signer {
             self.create_block_acceptance(&block_info.block)
         } else {
             debug!("{self}: Rejecting block {}", block_info.block.block_id());
-            self.create_block_rejection(RejectCode::RejectedInPriorRound, &block_info.block)
+            self.create_block_rejection(RejectReason::RejectedInPriorRound, &block_info.block)
         };
         Some(response)
     }
@@ -368,12 +372,12 @@ impl Signer {
     /// Create a block rejection response for a block with the given reject code
     pub fn create_block_rejection(
         &self,
-        reject_code: RejectCode,
+        reject_reason: RejectReason,
         block: &NakamotoBlock,
     ) -> BlockResponse {
         BlockResponse::rejected(
             block.header.signer_signature_hash(),
-            reject_code,
+            reject_reason,
             &self.private_key,
             self.mainnet,
             self.signer_db.calculate_tenure_extend_timestamp(
@@ -420,25 +424,27 @@ impl Signer {
                 true,
             ) {
                 // Error validating block
-                Err(e) => {
+                Err(RejectReason::ConnectivityIssues(e)) => {
                     warn!(
-                        "{self}: Error checking block proposal: {e:?}";
+                        "{self}: Error checking block proposal: {e}";
                         "signer_sighash" => %signer_signature_hash,
                         "block_id" => %block_id,
                     );
-                    Some(self.create_block_rejection(RejectCode::ConnectivityIssues, block))
+                    Some(self.create_block_rejection(RejectReason::ConnectivityIssues(e), block))
                 }
                 // Block proposal is bad
-                Ok(false) => {
+                Err(reject_code) => {
                     warn!(
                         "{self}: Block proposal invalid";
                         "signer_sighash" => %signer_signature_hash,
                         "block_id" => %block_id,
+                        "reject_reason" => %reject_code,
+                        "reject_code" => ?reject_code,
                     );
-                    Some(self.create_block_rejection(RejectCode::SortitionViewMismatch, block))
+                    Some(self.create_block_rejection(reject_code, block))
                 }
                 // Block proposal passed check, still don't know if valid
-                Ok(true) => None,
+                Ok(_) => None,
             }
         } else {
             warn!(
@@ -446,7 +452,7 @@ impl Signer {
                 "signer_sighash" => %signer_signature_hash,
                 "block_id" => %block_id,
             );
-            Some(self.create_block_rejection(RejectCode::NoSortitionView, block))
+            Some(self.create_block_rejection(RejectReason::NoSortitionView, block))
         }
     }
 
@@ -616,13 +622,14 @@ impl Signer {
         &mut self,
         stacks_client: &StacksClient,
         block_response: &BlockResponse,
+        sortition_state: &mut Option<SortitionsView>,
     ) {
         match block_response {
             BlockResponse::Accepted(accepted) => {
                 self.handle_block_signature(stacks_client, accepted);
             }
             BlockResponse::Rejected(block_rejection) => {
-                self.handle_block_rejection(block_rejection);
+                self.handle_block_rejection(block_rejection, sortition_state);
             }
         };
     }
@@ -651,21 +658,22 @@ impl Signer {
             ) {
                 Ok(true) => {}
                 Ok(false) => {
-                    return Some(
-                        self.create_block_rejection(
-                            RejectCode::SortitionViewMismatch,
-                            proposed_block,
-                        ),
-                    )
+                    return Some(self.create_block_rejection(
+                        RejectReason::SortitionViewMismatch,
+                        proposed_block,
+                    ))
                 }
                 Err(e) => {
                     warn!("{self}: Error checking block proposal: {e}";
                         "signer_sighash" => %signer_signature_hash,
                         "block_id" => %proposed_block.block_id()
                     );
-                    return Some(
-                        self.create_block_rejection(RejectCode::ConnectivityIssues, proposed_block),
-                    );
+                    return Some(self.create_block_rejection(
+                        RejectReason::ConnectivityIssues(
+                            "error checking block proposal".to_string(),
+                        ),
+                        proposed_block,
+                    ));
                 }
             }
         }
@@ -685,7 +693,7 @@ impl Signer {
                         "expected_at_least" => last_block_info.block.header.chain_length + 1,
                     );
                     return Some(self.create_block_rejection(
-                        RejectCode::SortitionViewMismatch,
+                        RejectReason::SortitionViewMismatch,
                         proposed_block,
                     ));
                 }
@@ -696,9 +704,12 @@ impl Signer {
                     "signer_sighash" => %signer_signature_hash,
                     "block_id" => %proposed_block.block_id()
                 );
-                return Some(
-                    self.create_block_rejection(RejectCode::ConnectivityIssues, proposed_block),
-                );
+                return Some(self.create_block_rejection(
+                    RejectReason::ConnectivityIssues(
+                        "failed to check block against signer db".to_string(),
+                    ),
+                    proposed_block,
+                ));
             }
         }
         None
@@ -787,6 +798,7 @@ impl Signer {
     fn handle_block_validate_reject(
         &mut self,
         block_validate_reject: &BlockValidateReject,
+        sortition_state: &mut Option<SortitionsView>,
     ) -> Option<BlockResponse> {
         crate::monitoring::actions::increment_block_validation_responses(false);
         let signer_signature_hash = block_validate_reject.signer_signature_hash;
@@ -827,7 +839,7 @@ impl Signer {
         self.signer_db
             .insert_block(&block_info)
             .unwrap_or_else(|e| self.handle_insert_block_error(e));
-        self.handle_block_rejection(&block_rejection);
+        self.handle_block_rejection(&block_rejection, sortition_state);
         Some(BlockResponse::Rejected(block_rejection))
     }
 
@@ -836,6 +848,7 @@ impl Signer {
         &mut self,
         stacks_client: &StacksClient,
         block_validate_response: &BlockValidateResponse,
+        sortition_state: &mut Option<SortitionsView>,
     ) {
         info!("{self}: Received a block validate response: {block_validate_response:?}");
         let block_response = match block_validate_response {
@@ -846,7 +859,7 @@ impl Signer {
                 self.handle_block_validate_ok(stacks_client, block_validate_ok)
             }
             BlockValidateResponse::Reject(block_validate_reject) => {
-                self.handle_block_validate_reject(block_validate_reject)
+                self.handle_block_validate_reject(block_validate_reject, sortition_state)
             }
         };
         // Remove this block validation from the pending table
@@ -946,8 +959,12 @@ impl Signer {
             "{self}: Failed to receive block validation response within {} ms. Rejecting block.", self.block_proposal_validation_timeout.as_millis();
             "signer_sighash" => %proposal_signer_sighash,
         );
-        let rejection =
-            self.create_block_rejection(RejectCode::ConnectivityIssues, &block_info.block);
+        let rejection = self.create_block_rejection(
+            RejectReason::ConnectivityIssues(
+                "failed to receive block validation response in time".to_string(),
+            ),
+            &block_info.block,
+        );
         if let Err(e) = block_info.mark_locally_rejected() {
             if !block_info.has_reached_consensus() {
                 warn!("{self}: Failed to mark block as locally rejected: {e:?}");
@@ -984,6 +1001,21 @@ impl Signer {
         })
     }
 
+    /// Compute the rejection weight for the given reject code, given a list of signatures
+    fn compute_reject_code_signing_weight<'a>(
+        &self,
+        addrs: impl Iterator<Item = &'a (StacksAddress, RejectReasonPrefix)>,
+        reject_code: RejectReasonPrefix,
+    ) -> u32 {
+        addrs.filter(|(_, code)| *code == reject_code).fold(
+            0u32,
+            |signing_weight, (stacker_address, _)| {
+                let stacker_weight = self.signer_weights.get(stacker_address).unwrap_or(&0);
+                signing_weight.saturating_add(*stacker_weight)
+            },
+        )
+    }
+
     /// Compute the total signing weight
     fn compute_signature_total_weight(&self) -> u32 {
         self.signer_weights
@@ -992,7 +1024,11 @@ impl Signer {
     }
 
     /// Handle an observed rejection from another signer
-    fn handle_block_rejection(&mut self, rejection: &BlockRejection) {
+    fn handle_block_rejection(
+        &mut self,
+        rejection: &BlockRejection,
+        sortition_state: &mut Option<SortitionsView>,
+    ) {
         debug!("{self}: Received a block-reject signature: {rejection:?}");
 
         let block_hash = &rejection.signer_signature_hash;
@@ -1035,10 +1071,11 @@ impl Signer {
         }
 
         // signature is valid! store it
-        if let Err(e) = self
-            .signer_db
-            .add_block_rejection_signer_addr(block_hash, &signer_address)
-        {
+        if let Err(e) = self.signer_db.add_block_rejection_signer_addr(
+            block_hash,
+            &signer_address,
+            &rejection.response_data.reject_reason,
+        ) {
             warn!("{self}: Failed to save block rejection signature: {e:?}",);
         }
 
@@ -1051,7 +1088,8 @@ impl Signer {
                 return;
             }
         };
-        let total_reject_weight = self.compute_signature_signing_weight(rejection_addrs.iter());
+        let total_reject_weight =
+            self.compute_signature_signing_weight(rejection_addrs.iter().map(|(addr, _)| addr));
         let total_weight = self.compute_signature_total_weight();
 
         let min_weight = NakamotoBlockHeader::compute_voting_weight_threshold(total_weight)
@@ -1078,6 +1116,24 @@ impl Signer {
         {
             // Consensus reached! No longer bother tracking its validation submission to the node as we are too late to participate in the decision anyway.
             self.submitted_block_proposal = None;
+        }
+
+        // If 30% of the signers have rejected the block due to an invalid
+        // reorg, mark the miner as invalid.
+        let total_reorg_reject_weight = self.compute_reject_code_signing_weight(
+            rejection_addrs.iter(),
+            RejectReasonPrefix::ReorgNotAllowed,
+        );
+        if total_reorg_reject_weight.saturating_add(min_weight) > total_weight {
+            // Mark the miner as invalid
+            if let Some(sortition_state) = sortition_state {
+                let ch = block_info.block.header.consensus_hash;
+                if sortition_state.cur_sortition.consensus_hash == ch {
+                    info!("{self}: Marking miner as invalid for attempted reorg");
+                    sortition_state.cur_sortition.miner_status =
+                        SortitionMinerStatus::InvalidatedBeforeFirstBlock;
+                }
+            }
         }
     }
 

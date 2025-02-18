@@ -24,7 +24,7 @@ use std::{env, thread};
 use clarity::vm::types::PrincipalData;
 use libsigner::v0::messages::{
     BlockAccepted, BlockRejection, BlockResponse, MessageSlotID, MinerSlotID, PeerInfo, RejectCode,
-    SignerMessage,
+    RejectReason, SignerMessage,
 };
 use libsigner::{
     BlockProposal, BlockProposalData, SignerSession, StackerDBSession, VERSION_STRING,
@@ -1131,7 +1131,8 @@ pub fn wait_for_block_acceptance_from_signers(
     timeout_secs: u64,
     signer_signature_hash: &Sha512Trunc256Sum,
     expected_signers: &[StacksPublicKey],
-) -> Result<(), String> {
+) -> Result<Vec<BlockAccepted>, String> {
+    let mut result = vec![];
     wait_for(timeout_secs, || {
         let signatures = test_observer::get_stackerdb_chunks()
             .into_iter()
@@ -1146,14 +1147,19 @@ pub fn wait_for_block_acceptance_from_signers(
                                 .expect("Failed to verify signature")
                         })
                     {
-                        return Some(accepted.signature);
+                        return Some((accepted.signature, accepted));
                     }
                 }
                 None
             })
-            .collect::<HashSet<_>>();
-        Ok(signatures.len() == expected_signers.len())
-    })
+            .collect::<HashMap<_, _>>();
+        if signatures.len() == expected_signers.len() {
+            result = signatures.values().cloned().collect();
+            return Ok(true);
+        }
+        Ok(false)
+    })?;
+    Ok(result)
 }
 
 /// Waits for all of the provided signers to send a rejection for a block
@@ -1161,10 +1167,11 @@ pub fn wait_for_block_acceptance_from_signers(
 pub fn wait_for_block_rejections_from_signers(
     timeout_secs: u64,
     expected_signers: &[StacksPublicKey],
-) -> Result<(), String> {
+) -> Result<Vec<BlockRejection>, String> {
+    let mut result = Vec::new();
     wait_for(timeout_secs, || {
         let stackerdb_events = test_observer::get_stackerdb_chunks();
-        let block_rejections: HashSet<_> = stackerdb_events
+        let block_rejections: HashMap<_, _> = stackerdb_events
             .into_iter()
             .flat_map(|chunk| chunk.modified_slots)
             .filter_map(|chunk| {
@@ -1176,7 +1183,7 @@ pub fn wait_for_block_rejections_from_signers(
                             .recover_public_key()
                             .expect("Failed to recover public key from rejection");
                         if expected_signers.contains(&rejected_pubkey) {
-                            Some(rejected_pubkey)
+                            Some((rejected_pubkey, rejection))
                         } else {
                             None
                         }
@@ -1184,9 +1191,14 @@ pub fn wait_for_block_rejections_from_signers(
                     _ => None,
                 }
             })
-            .collect::<HashSet<_>>();
-        Ok(block_rejections.len() == expected_signers.len())
-    })
+            .collect();
+        if block_rejections.len() == expected_signers.len() {
+            result = block_rejections.values().cloned().collect();
+            return Ok(true);
+        }
+        Ok(false)
+    })?;
+    Ok(result)
 }
 
 #[test]
@@ -1277,15 +1289,14 @@ fn block_proposal_rejection() {
                 reason: _reason,
                 reason_code,
                 signer_signature_hash,
+                response_data,
                 ..
             })) = message
             {
                 if signer_signature_hash == block_signer_signature_hash_1 {
                     found_signer_signature_hash_1 = true;
-                    assert!(
-                        matches!(reason_code, RejectCode::SortitionViewMismatch),
-                        "Expected sortition view mismatch rejection. Got: {reason_code}"
-                    );
+                    assert_eq!(reason_code, RejectCode::SortitionViewMismatch,);
+                    assert_eq!(response_data.reject_reason, RejectReason::InvalidBitvec);
                 } else if signer_signature_hash == block_signer_signature_hash_2 {
                     found_signer_signature_hash_2 = true;
                     assert!(matches!(
@@ -3785,10 +3796,12 @@ fn empty_sortition() {
             if let SignerMessage::BlockResponse(BlockResponse::Rejected(BlockRejection {
                 reason_code,
                 metadata,
+                response_data,
                 ..
             })) = latest_msg
             {
-                assert!(matches!(reason_code, RejectCode::SortitionViewMismatch));
+                assert_eq!(reason_code, RejectCode::SortitionViewMismatch);
+                assert_eq!(response_data.reject_reason, RejectReason::InvalidMiner);
                 assert_eq!(metadata.server_version, VERSION_STRING.to_string());
                 found_rejections.push(*slot_id);
             } else {
@@ -7067,7 +7080,7 @@ fn block_validation_response_timeout() {
                 signer_signature_hash, block_signer_signature_hash_1,
                 "Received a rejection for the wrong block"
             );
-            if matches!(reason_code, RejectCode::ConnectivityIssues) {
+            if matches!(reason_code, RejectCode::ConnectivityIssues(_)) {
                 return Ok(true);
             }
         }
@@ -11453,5 +11466,186 @@ fn non_blocking_minority_configured_to_favour_prev_miner() {
         miners.get_peer_stacks_tip_height(),
         starting_peer_height + 4
     );
+    miners.shutdown();
+}
+
+/// Test a scenario where:
+/// Two miners boot to Nakamoto.
+/// Sortition occurs. Miner 1 wins.
+/// Miner 1 proposes a block N
+/// Signers accept and the stacks tip advances to N
+/// Miner 1's block commits are paused so it cannot confirm the next tenure.
+/// Sortition occurs. Miner 2 wins.
+/// Miner 2 successfully mines blocks N+1
+/// Miner 1 wins the next sortition, with its block commit not confirming the last tenure.
+/// Miner 1 proposes block N+1'
+/// 3 signers approve N+1', saying "Miner is not building off of most recent tenure. A tenure they
+///   reorg has already mined blocks, but the block was poorly timed, allowing the reorg."
+/// The other 3 signers reject N+1', because their `first_proposal_burn_block_timing_secs` is
+///   shorter and has been exceeded.
+/// Miner 1 proposes N+1' again, and all signers reject it this time.
+/// Miner 2 proposes N+2, a tenure extend block and it is accepted by all signers.
+#[test]
+#[ignore]
+fn mark_miner_as_invalid_if_reorg_is_rejected() {
+    if env::var("BITCOIND_TEST") != Ok("1".into()) {
+        return;
+    }
+
+    info!("------------------------- Test Setup -------------------------");
+
+    let num_signers = 5;
+    let num_txs = 3;
+
+    let mut miners = MultipleMinerTest::new_with_config_modifications(
+        num_signers,
+        num_txs,
+        |signer_config| {
+            // Lets make sure we never time out since we need to stall some things to force our scenario
+            signer_config.block_proposal_validation_timeout = Duration::from_secs(1800);
+            signer_config.tenure_last_block_proposal_timeout = Duration::from_secs(1800);
+            if signer_config.endpoint.port() % 2 == 0 {
+                // Even signers will allow a reorg for a long time
+                signer_config.first_proposal_burn_block_timing = Duration::from_secs(1800);
+            } else {
+                // Odd signers will not allow a reorg at all
+                signer_config.first_proposal_burn_block_timing = Duration::from_secs(0);
+            }
+        },
+        |_| {},
+        |_| {},
+    );
+    let all_signers = miners
+        .signer_test
+        .signer_stacks_private_keys
+        .iter()
+        .map(StacksPublicKey::from_private)
+        .collect::<Vec<_>>();
+    let mut approving_signers = vec![];
+    let mut rejecting_signers = vec![];
+    for (i, signer_config) in miners.signer_test.signer_configs.iter().enumerate() {
+        let public_key = all_signers[i].clone();
+        if signer_config.endpoint.port() % 2 == 0 {
+            // Even signers will allow a reorg for a long time
+            approving_signers.push(public_key);
+        } else {
+            // Odd signers will not allow a reorg at all
+            rejecting_signers.push(public_key);
+        }
+    }
+    let rl1_skip_commit_op = miners
+        .signer_test
+        .running_nodes
+        .counters
+        .naka_skip_commit_op
+        .clone();
+    let rl2_skip_commit_op = miners.rl2_counters.naka_skip_commit_op.clone();
+
+    let (conf_1, _) = miners.get_node_configs();
+    let (miner_pk_1, miner_pk_2) = miners.get_miner_public_keys();
+    let (miner_pkh_1, miner_pkh_2) = miners.get_miner_public_key_hashes();
+
+    info!("------------------------- Pause Miner 2's Block Commits -------------------------");
+
+    // Make sure Miner 2 cannot win a sortition at first.
+    rl2_skip_commit_op.set(true);
+
+    miners.boot_to_epoch_3();
+
+    let burnchain = conf_1.get_burnchain();
+    let sortdb = burnchain.open_sortition_db(true).unwrap();
+
+    info!("------------------------- Pause Miner 1's Block Commits -------------------------");
+    rl1_skip_commit_op.set(true);
+
+    info!("------------------------- Miner 1 Mines a Nakamoto Block N -------------------------");
+    let info_before = get_chain_info(&conf_1);
+    miners
+        .mine_bitcoin_block_and_tenure_change_tx(&sortdb, TenureChangeCause::BlockFound, 30)
+        .expect("Failed to mine BTC block followed by Block N");
+    verify_sortition_winner(&sortdb, &miner_pkh_1);
+    let block_n =
+        wait_for_block_pushed_by_miner_key(30, info_before.stacks_tip_height + 1, &miner_pk_1)
+            .expect("Failed to get block N");
+    let block_n_height = block_n.header.chain_length;
+    info!("Block N: {block_n_height}");
+
+    let info_after = get_chain_info(&conf_1);
+    assert_eq!(info_after.stacks_tip, block_n.header.block_hash());
+    assert_eq!(
+        info_after.stacks_tip_height,
+        info_before.stacks_tip_height + 1
+    );
+    assert_eq!(info_after.stacks_tip_height, block_n_height);
+
+    info!("------------------------- Miner 2 Submits a Block Commit -------------------------");
+    miners.submit_commit_miner_2(&sortdb);
+
+    info!("------------------------- Pause Miner 2's Block Mining -------------------------");
+    TEST_MINE_STALL.set(true);
+
+    info!("------------------------- Mine 2 wins the Next Tenure -------------------------");
+    miners
+        .mine_bitcoin_blocks_and_confirm(&sortdb, 1, 30)
+        .expect("Failed to mine BTC block");
+    verify_sortition_winner(&sortdb, &miner_pkh_2);
+
+    info!("------------------------- Miner 1 Submits a Block Commit -------------------------");
+    miners.submit_commit_miner_1(&sortdb);
+
+    info!("------------------------- Miner 2 Mines Block N+1 -------------------------");
+    TEST_MINE_STALL.set(false);
+
+    let block_n_1 = wait_for_block_pushed_by_miner_key(30, block_n_height + 1, &miner_pk_2)
+        .expect("Failed to get block N+1");
+
+    let info_after = get_chain_info(&conf_1);
+    assert_eq!(info_after.stacks_tip_height, block_n_height + 1);
+    assert_eq!(info_after.stacks_tip, block_n_1.header.block_hash());
+
+    info!("------------------------- Miner 1 Wins the Next Tenure, Mines N+1' -------------------------");
+    test_observer::clear();
+    miners
+        .mine_bitcoin_blocks_and_confirm(&sortdb, 1, 30)
+        .expect("Failed to mine BTC block");
+    let block_n_1_prime = wait_for_block_proposal(30, block_n_height + 1, &miner_pk_1)
+        .expect("Failed to get block proposal N+1'");
+    // Stall the miner from proposing again until we're ready
+    TEST_BROADCAST_PROPOSAL_STALL.set(vec![miner_pk_1]);
+
+    info!("------------------------- Wait for 3 acceptances and 2 rejections -------------------------");
+    let signer_signature_hash = block_n_1_prime.header.signer_signature_hash();
+    wait_for_block_acceptance_from_signers(30, &signer_signature_hash, &approving_signers)
+        .expect("Timed out waiting for block acceptance from approving signers");
+    let rejections = wait_for_block_rejections_from_signers(30, &rejecting_signers)
+        .expect("Timed out waiting for block rejection from rejecting signers");
+    for rejection in rejections {
+        assert_eq!(rejection.signer_signature_hash, signer_signature_hash);
+        assert_eq!(
+            rejection.response_data.reject_reason,
+            RejectReason::ReorgNotAllowed,
+            "Reject reason is not ReorgNotAllowed"
+        );
+    }
+
+    info!("------------------------- Miner 1 Proposes N+1' Again -------------------------");
+    test_observer::clear();
+    // Allow the miner to propose again
+    TEST_BROADCAST_PROPOSAL_STALL.set(vec![]);
+    let block_n_1_prime = wait_for_block_proposal(30, block_n_height + 1, &miner_pk_1)
+        .expect("Failed to propose block N+1' again");
+
+    info!("------------------------- Wait for 5 rejections -------------------------");
+
+    let signer_signature_hash = block_n_1_prime.header.signer_signature_hash();
+    let rejections = wait_for_block_rejections_from_signers(30, &all_signers)
+        .expect("Timed out waiting for block rejection from all signers");
+    for rejection in rejections {
+        assert_eq!(rejection.signer_signature_hash, signer_signature_hash);
+        assert!(
+            rejection.response_data.reject_reason == RejectReason::ReorgNotAllowed
+                || rejection.response_data.reject_reason == RejectReason::InvalidMiner
+        );
+    }
     miners.shutdown();
 }

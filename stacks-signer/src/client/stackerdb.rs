@@ -281,7 +281,7 @@ mod tests {
     use clarity::util::hash::{MerkleTree, Sha512Trunc256Sum};
     use clarity::util::secp256k1::MessageSignature;
     use libsigner::v0::messages::{
-        BlockRejection, BlockResponse, BlockResponseData, RejectCode, SignerMessage,
+        BlockRejection, BlockResponse, BlockResponseData, RejectCode, RejectReason, SignerMessage,
         SignerMessageMetadata,
     };
     use rand::{thread_rng, RngCore};
@@ -332,7 +332,10 @@ mod tests {
             chain_id: thread_rng().next_u32(),
             signature: MessageSignature::empty(),
             metadata: SignerMessageMetadata::empty(),
-            response_data: BlockResponseData::new(thread_rng().next_u64()),
+            response_data: BlockResponseData::new(
+                thread_rng().next_u64(),
+                RejectReason::RejectedInPriorRound,
+            ),
         };
         let signer_message = SignerMessage::BlockResponse(BlockResponse::Rejected(block_reject));
         let ack = StackerDBChunkAckData {

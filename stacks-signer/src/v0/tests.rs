@@ -16,7 +16,7 @@
 use std::sync::LazyLock;
 
 use blockstack_lib::chainstate::nakamoto::NakamotoBlock;
-use libsigner::v0::messages::{BlockResponse, RejectCode};
+use libsigner::v0::messages::{BlockResponse, RejectReason};
 use libsigner::BlockProposal;
 use slog::{slog_info, slog_warn};
 use stacks_common::types::chainstate::StacksPublicKey;
@@ -98,7 +98,7 @@ impl Signer {
             self.signer_db
                 .insert_block(block_info)
                 .unwrap_or_else(|e| self.handle_insert_block_error(e));
-            Some(self.create_block_rejection(RejectCode::TestingDirective, &block_proposal.block))
+            Some(self.create_block_rejection(RejectReason::TestingDirective, &block_proposal.block))
         } else {
             block_response
         }

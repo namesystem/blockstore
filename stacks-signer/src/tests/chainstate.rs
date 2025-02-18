@@ -29,6 +29,7 @@ use blockstack_lib::net::api::get_tenures_fork_info::TenureForkingInfo;
 use blockstack_lib::net::api::getsortition::SortitionInfo;
 use clarity::types::chainstate::{BurnchainHeaderHash, SortitionId};
 use clarity::util::vrf::VRFProof;
+use libsigner::v0::messages::RejectReason;
 use libsigner::{BlockProposal, BlockProposalData};
 use slog::slog_info;
 use stacks_common::bitvec::BitVec;
@@ -41,9 +42,7 @@ use stacks_common::util::get_epoch_time_secs;
 use stacks_common::util::hash::{Hash160, Sha512Trunc256Sum};
 use stacks_common::util::secp256k1::MessageSignature;
 
-use crate::chainstate::{
-    ProposalEvalConfig, SignerChainstateError, SortitionMinerStatus, SortitionState, SortitionsView,
-};
+use crate::chainstate::{ProposalEvalConfig, SortitionMinerStatus, SortitionState, SortitionsView};
 use crate::client::tests::MockServerClient;
 use crate::client::StacksClient;
 use crate::signerdb::{BlockInfo, SignerDb};
@@ -134,15 +133,13 @@ fn check_proposal_units() {
     let (stacks_client, mut signer_db, block_pk, mut view, block) =
         setup_test_environment("check_proposal_units");
 
-    assert!(!view
-        .check_proposal(&stacks_client, &mut signer_db, &block, &block_pk, false)
-        .unwrap());
+    view.check_proposal(&stacks_client, &mut signer_db, &block, &block_pk, false)
+        .expect_err("Proposal should not validate");
 
     view.last_sortition = None;
 
-    assert!(!view
-        .check_proposal(&stacks_client, &mut signer_db, &block, &block_pk, false)
-        .unwrap());
+    view.check_proposal(&stacks_client, &mut signer_db, &block, &block_pk, false)
+        .expect_err("Proposal should not validate");
 }
 
 #[test]
@@ -151,33 +148,31 @@ fn check_proposal_miner_pkh_mismatch() {
         setup_test_environment("miner_pkh_mismatch");
     block.header.consensus_hash = view.cur_sortition.consensus_hash;
     let different_block_pk = StacksPublicKey::from_private(&StacksPrivateKey::from_seed(&[2, 3]));
-    assert!(!view
-        .check_proposal(
-            &stacks_client,
-            &mut signer_db,
-            &block,
-            &different_block_pk,
-            false,
-        )
-        .unwrap());
+    view.check_proposal(
+        &stacks_client,
+        &mut signer_db,
+        &block,
+        &different_block_pk,
+        false,
+    )
+    .expect_err("Proposal should not validate");
 
     block.header.consensus_hash = view.last_sortition.as_ref().unwrap().consensus_hash;
-    assert!(!view
-        .check_proposal(
-            &stacks_client,
-            &mut signer_db,
-            &block,
-            &different_block_pk,
-            false,
-        )
-        .unwrap());
+    view.check_proposal(
+        &stacks_client,
+        &mut signer_db,
+        &block,
+        &different_block_pk,
+        false,
+    )
+    .expect_err("Proposal should not validate");
 }
 
 fn reorg_timing_testing(
     test_name: &str,
     first_proposal_burn_block_timing_secs: u64,
     sortition_timing_secs: u64,
-) -> Result<bool, SignerChainstateError> {
+) -> Result<(), RejectReason> {
     let (_stacks_client, mut signer_db, block_pk, mut view, mut block) =
         setup_test_environment(test_name);
     view.config.first_proposal_burn_block_timing =
@@ -287,13 +282,13 @@ fn reorg_timing_testing(
 #[test]
 fn check_proposal_reorg_timing_bad() {
     let result = reorg_timing_testing("reorg_timing_bad", 30, 31);
-    assert!(!result.unwrap(), "Proposal should not validate, because the reorg occurred in a block whose proposed time was long enough before the sortition");
+    result.expect_err("Proposal should not validate, because the reorg occurred in a block whose proposed time was long enough before the sortition");
 }
 
 #[test]
 fn check_proposal_reorg_timing_ok() {
     let result = reorg_timing_testing("reorg_timing_okay", 30, 30);
-    assert!(result.unwrap(), "Proposal should validate okay, because the reorg occurred in a block whose proposed time was close to the sortition");
+    result.expect("Proposal should validate okay, because the reorg occurred in a block whose proposed time was close to the sortition");
 }
 
 #[test]
@@ -301,18 +296,15 @@ fn check_proposal_invalid_status() {
     let (stacks_client, mut signer_db, block_pk, mut view, mut block) =
         setup_test_environment("invalid_status");
     block.header.consensus_hash = view.cur_sortition.consensus_hash;
-    assert!(view
-        .check_proposal(&stacks_client, &mut signer_db, &block, &block_pk, false)
-        .unwrap());
+    view.check_proposal(&stacks_client, &mut signer_db, &block, &block_pk, false)
+        .expect("Proposal should validate");
     view.cur_sortition.miner_status = SortitionMinerStatus::InvalidatedAfterFirstBlock;
-    assert!(!view
-        .check_proposal(&stacks_client, &mut signer_db, &block, &block_pk, false)
-        .unwrap());
+    view.check_proposal(&stacks_client, &mut signer_db, &block, &block_pk, false)
+        .expect_err("Proposal should not validate");
 
     block.header.consensus_hash = view.last_sortition.as_ref().unwrap().consensus_hash;
-    assert!(!view
-        .check_proposal(&stacks_client, &mut signer_db, &block, &block_pk, false)
-        .unwrap());
+    view.check_proposal(&stacks_client, &mut signer_db, &block, &block_pk, false)
+        .expect_err("Proposal should not validate");
 
     view.cur_sortition.miner_status = SortitionMinerStatus::InvalidatedBeforeFirstBlock;
     block.header.consensus_hash = view.last_sortition.as_ref().unwrap().consensus_hash;
@@ -321,9 +313,8 @@ fn check_proposal_invalid_status() {
     // the stacks-node to do that (because the stacks-node actually knows whether or not their
     // parent blocks have been seen before, while the signer state checks are only reasoning about
     // stacks blocks seen by the signer, which may be a subset)
-    assert!(view
-        .check_proposal(&stacks_client, &mut signer_db, &block, &block_pk, false)
-        .unwrap());
+    view.check_proposal(&stacks_client, &mut signer_db, &block, &block_pk, false)
+        .expect("Proposal should validate");
 }
 
 fn make_tenure_change_payload() -> TenureChangePayload {
@@ -370,9 +361,8 @@ fn check_proposal_tenure_extend_invalid_conditions() {
     extend_payload.prev_tenure_consensus_hash = block.header.consensus_hash;
     let tx = make_tenure_change_tx(extend_payload);
     block.txs = vec![tx];
-    assert!(!view
-        .check_proposal(&stacks_client, &mut signer_db, &block, &block_pk, false)
-        .unwrap());
+    view.check_proposal(&stacks_client, &mut signer_db, &block, &block_pk, false)
+        .expect_err("Proposal should not validate");
 
     let mut extend_payload = make_tenure_change_payload();
     extend_payload.burn_view_consensus_hash = ConsensusHash([64; 20]);
@@ -380,9 +370,8 @@ fn check_proposal_tenure_extend_invalid_conditions() {
     extend_payload.prev_tenure_consensus_hash = block.header.consensus_hash;
     let tx = make_tenure_change_tx(extend_payload);
     block.txs = vec![tx];
-    assert!(view
-        .check_proposal(&stacks_client, &mut signer_db, &block, &block_pk, false)
-        .unwrap());
+    view.check_proposal(&stacks_client, &mut signer_db, &block, &block_pk, false)
+        .expect("Proposal should validate");
 }
 
 #[test]
@@ -402,47 +391,43 @@ fn check_block_proposal_timeout() {
         .insert_burn_block(&burn_hash, burn_height, &received_time)
         .unwrap();
 
-    assert!(view
-        .check_proposal(
-            &stacks_client,
-            &mut signer_db,
-            &curr_sortition_block,
-            &block_pk,
-            false,
-        )
-        .unwrap());
+    view.check_proposal(
+        &stacks_client,
+        &mut signer_db,
+        &curr_sortition_block,
+        &block_pk,
+        false,
+    )
+    .expect("Proposal should validate");
 
-    assert!(!view
-        .check_proposal(
-            &stacks_client,
-            &mut signer_db,
-            &last_sortition_block,
-            &block_pk,
-            false,
-        )
-        .unwrap());
+    view.check_proposal(
+        &stacks_client,
+        &mut signer_db,
+        &last_sortition_block,
+        &block_pk,
+        false,
+    )
+    .expect_err("Proposal should not validate");
 
     // Sleep a bit to time out the block proposal
     std::thread::sleep(Duration::from_secs(5));
-    assert!(!view
-        .check_proposal(
-            &stacks_client,
-            &mut signer_db,
-            &curr_sortition_block,
-            &block_pk,
-            false,
-        )
-        .unwrap());
+    view.check_proposal(
+        &stacks_client,
+        &mut signer_db,
+        &curr_sortition_block,
+        &block_pk,
+        false,
+    )
+    .expect_err("Proposal should not validate");
 
-    assert!(view
-        .check_proposal(
-            &stacks_client,
-            &mut signer_db,
-            &last_sortition_block,
-            &block_pk,
-            false,
-        )
-        .unwrap());
+    view.check_proposal(
+        &stacks_client,
+        &mut signer_db,
+        &last_sortition_block,
+        &block_pk,
+        false,
+    )
+    .expect("Proposal should validate");
 }
 
 #[test]
@@ -535,9 +520,8 @@ fn check_proposal_refresh() {
     let (stacks_client, mut signer_db, block_pk, mut view, mut block) =
         setup_test_environment("check_proposal_refresh");
     block.header.consensus_hash = view.cur_sortition.consensus_hash;
-    assert!(view
-        .check_proposal(&stacks_client, &mut signer_db, &block, &block_pk, false)
-        .unwrap());
+    view.check_proposal(&stacks_client, &mut signer_db, &block, &block_pk, false)
+        .expect("Proposal should validate");
 
     let MockServerClient {
         server,
@@ -587,5 +571,5 @@ fn check_proposal_refresh() {
         format!("HTTP/1.1 200 Ok\n\n{}", serde_json::json!(expected_result)).as_bytes(),
     );
     let result = h.join().unwrap();
-    assert!(result.unwrap());
+    result.expect("Proposal should validate");
 }
