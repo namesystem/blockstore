@@ -17,6 +17,7 @@ and this project adheres to the versioning scheme outlined in the [README.md](RE
 - Increase default `block_proposal_timeout_ms` from 10 minutes to 4 hours. Until #5729 is implemented, there is no value in rejecting a late block from a miner, since a late block is better than no block at all.
 - Signers no longer view any block proposal by a miner in their DB as indicative of valid miner activity.
 - Various index improvements to the signer's database to improve performance.
+- Add new reject codes to the signer response for better visibility into why a block was rejected.
 
 ## [3.1.0.0.5.0]
 

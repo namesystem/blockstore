@@ -24,7 +24,7 @@ use std::{env, thread};
 use clarity::vm::types::PrincipalData;
 use libsigner::v0::messages::{
     BlockAccepted, BlockRejection, BlockResponse, MessageSlotID, MinerSlotID, PeerInfo, RejectCode,
-    SignerMessage,
+    RejectReason, SignerMessage,
 };
 use libsigner::{
     BlockProposal, BlockProposalData, SignerSession, StackerDBSession, VERSION_STRING,
@@ -1277,15 +1277,14 @@ fn block_proposal_rejection() {
                 reason: _reason,
                 reason_code,
                 signer_signature_hash,
+                response_data,
                 ..
             })) = message
             {
                 if signer_signature_hash == block_signer_signature_hash_1 {
                     found_signer_signature_hash_1 = true;
-                    assert!(
-                        matches!(reason_code, RejectCode::SortitionViewMismatch),
-                        "Expected sortition view mismatch rejection. Got: {reason_code}"
-                    );
+                    assert_eq!(reason_code, RejectCode::SortitionViewMismatch,);
+                    assert_eq!(response_data.reject_reason, RejectReason::InvalidBitvec);
                 } else if signer_signature_hash == block_signer_signature_hash_2 {
                     found_signer_signature_hash_2 = true;
                     assert!(matches!(
@@ -3785,10 +3784,12 @@ fn empty_sortition() {
             if let SignerMessage::BlockResponse(BlockResponse::Rejected(BlockRejection {
                 reason_code,
                 metadata,
+                response_data,
                 ..
             })) = latest_msg
             {
-                assert!(matches!(reason_code, RejectCode::SortitionViewMismatch));
+                assert_eq!(reason_code, RejectCode::SortitionViewMismatch);
+                assert_eq!(response_data.reject_reason, RejectReason::InvalidMiner);
                 assert_eq!(metadata.server_version, VERSION_STRING.to_string());
                 found_rejections.push(*slot_id);
             } else {
@@ -7067,7 +7068,7 @@ fn block_validation_response_timeout() {
                 signer_signature_hash, block_signer_signature_hash_1,
                 "Received a rejection for the wrong block"
             );
-            if matches!(reason_code, RejectCode::ConnectivityIssues) {
+            if matches!(reason_code, RejectCode::ConnectivityIssues(_)) {
                 return Ok(true);
             }
         }

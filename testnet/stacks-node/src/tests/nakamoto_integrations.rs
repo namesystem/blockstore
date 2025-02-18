@@ -28,7 +28,7 @@ use clarity::vm::types::{PrincipalData, QualifiedContractIdentifier};
 use clarity::vm::{ClarityName, ClarityVersion, Value};
 use http_types::headers::AUTHORIZATION;
 use lazy_static::lazy_static;
-use libsigner::v0::messages::SignerMessage as SignerMessageV0;
+use libsigner::v0::messages::{RejectReason, SignerMessage as SignerMessageV0};
 use libsigner::{SignerSession, StackerDBSession};
 use rusqlite::OptionalExtension;
 use stacks::burnchains::{MagicBytes, Txid};
@@ -6588,7 +6588,7 @@ fn signer_chainstate() {
         if let Some((ref miner_pk, ref prior_tenure_first, ref prior_tenure_interims)) =
             last_tenures_proposals
         {
-            let valid = sortitions_view
+            let reject_code = sortitions_view
                 .check_proposal(
                     &signer_client,
                     &mut signer_db,
@@ -6596,17 +6596,19 @@ fn signer_chainstate() {
                     miner_pk,
                     true,
                 )
-                .unwrap();
-            assert!(
-                !valid,
+                .expect_err("Sortitions view should reject proposals from prior tenure");
+            assert_eq!(
+                reject_code,
+                RejectReason::NotLatestSortitionWinner,
                 "Sortitions view should reject proposals from prior tenure"
             );
             for block in prior_tenure_interims.iter() {
-                let valid = sortitions_view
+                let reject_code = sortitions_view
                     .check_proposal(&signer_client, &mut signer_db, block, miner_pk, true)
-                    .unwrap();
-                assert!(
-                    !valid,
+                    .expect_err("Sortitions view should reject proposals from prior tenure");
+                assert_eq!(
+                    reject_code,
+                    RejectReason::NotLatestSortitionWinner,
                     "Sortitions view should reject proposals from prior tenure"
                 );
             }
@@ -6632,7 +6634,7 @@ fn signer_chainstate() {
         let reward_cycle = burnchain
             .block_height_to_reward_cycle(burn_block_height)
             .unwrap();
-        let valid = sortitions_view
+        sortitions_view
             .check_proposal(
                 &signer_client,
                 &mut signer_db,
@@ -6640,12 +6642,7 @@ fn signer_chainstate() {
                 &proposal.1,
                 true,
             )
-            .unwrap();
-
-        assert!(
-            valid,
-            "Nakamoto integration test produced invalid block proposal"
-        );
+            .expect("Nakamoto integration test produced invalid block proposal");
         signer_db
             .insert_block(&BlockInfo {
                 block: proposal.0.clone(),
@@ -6688,7 +6685,7 @@ fn signer_chainstate() {
         // an intermediate block was produced. check the proposed block
         let proposal_interim = get_latest_block_proposal(&naka_conf, &sortdb).unwrap();
 
-        let valid = sortitions_view
+        sortitions_view
             .check_proposal(
                 &signer_client,
                 &mut signer_db,
@@ -6696,12 +6693,7 @@ fn signer_chainstate() {
                 &proposal_interim.1,
                 true,
             )
-            .unwrap();
-
-        assert!(
-            valid,
-            "Nakamoto integration test produced invalid block proposal"
-        );
+            .expect("Nakamoto integration test produced invalid block proposal");
         // force the view to refresh and check again
 
         // this config disallows any reorg due to poorly timed block commits
@@ -6721,7 +6713,7 @@ fn signer_chainstate() {
             .unwrap();
         let mut sortitions_view =
             SortitionsView::fetch_view(proposal_conf, &signer_client).unwrap();
-        let valid = sortitions_view
+        sortitions_view
             .check_proposal(
                 &signer_client,
                 &mut signer_db,
@@ -6729,12 +6721,7 @@ fn signer_chainstate() {
                 &proposal_interim.1,
                 true,
             )
-            .unwrap();
-
-        assert!(
-            valid,
-            "Nakamoto integration test produced invalid block proposal"
-        );
+            .expect("Nakamoto integration test produced invalid block proposal");
 
         signer_db
             .insert_block(&BlockInfo {
@@ -6795,18 +6782,15 @@ fn signer_chainstate() {
         reorg_attempts_activity_timeout: Duration::from_secs(30),
     };
     let mut sortitions_view = SortitionsView::fetch_view(proposal_conf, &signer_client).unwrap();
-    assert!(
-        !sortitions_view
-            .check_proposal(
-                &signer_client,
-                &mut signer_db,
-                &sibling_block,
-                &miner_pk,
-                false,
-            )
-            .unwrap(),
-        "A sibling of a previously approved block must be rejected."
-    );
+    sortitions_view
+        .check_proposal(
+            &signer_client,
+            &mut signer_db,
+            &sibling_block,
+            &miner_pk,
+            false,
+        )
+        .expect_err("A sibling of a previously approved block must be rejected.");
 
     // Case: the block contains a tenure change, but blocks have already
     //  been signed in this tenure
@@ -6852,18 +6836,15 @@ fn signer_chainstate() {
         ],
     };
 
-    assert!(
-        !sortitions_view
-            .check_proposal(
-                &signer_client,
-                &mut signer_db,
-                &sibling_block,
-                &miner_pk,
-                false,
-            )
-            .unwrap(),
-        "A sibling of a previously approved block must be rejected."
-    );
+    sortitions_view
+        .check_proposal(
+            &signer_client,
+            &mut signer_db,
+            &sibling_block,
+            &miner_pk,
+            false,
+        )
+        .expect_err("A sibling of a previously approved block must be rejected.");
 
     // Case: the block contains a tenure change, but it doesn't confirm all the blocks of the parent tenure
     let reorg_to_block = first_tenure_blocks.as_ref().unwrap().first().unwrap();
@@ -6915,18 +6896,15 @@ fn signer_chainstate() {
         ],
     };
 
-    assert!(
-        !sortitions_view
-            .check_proposal(
-                &signer_client,
-                &mut signer_db,
-                &sibling_block,
-                &miner_pk,
-                false,
-            )
-            .unwrap(),
-        "A sibling of a previously approved block must be rejected."
-    );
+    sortitions_view
+        .check_proposal(
+            &signer_client,
+            &mut signer_db,
+            &sibling_block,
+            &miner_pk,
+            false,
+        )
+        .expect_err("A sibling of a previously approved block must be rejected.");
 
     // Case: the block contains a tenure change, but the parent tenure is a reorg
     let reorg_to_block = first_tenure_blocks.as_ref().unwrap().last().unwrap();
@@ -6980,18 +6958,15 @@ fn signer_chainstate() {
         ],
     };
 
-    assert!(
-        !sortitions_view
-            .check_proposal(
-                &signer_client,
-                &mut signer_db,
-                &sibling_block,
-                &miner_pk,
-                false,
-            )
-            .unwrap(),
-        "A sibling of a previously approved block must be rejected."
-    );
+    sortitions_view
+        .check_proposal(
+            &signer_client,
+            &mut signer_db,
+            &sibling_block,
+            &miner_pk,
+            false,
+        )
+        .expect_err("A sibling of a previously approved block must be rejected.");
 
     let start_sortition = &reorg_to_block.header.consensus_hash;
     let stop_sortition = &sortitions_view.cur_sortition.prior_sortition;
