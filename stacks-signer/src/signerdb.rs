@@ -21,7 +21,7 @@ use std::time::{Duration, SystemTime};
 use blockstack_lib::chainstate::nakamoto::NakamotoBlock;
 use blockstack_lib::chainstate::stacks::TransactionPayload;
 use blockstack_lib::util_lib::db::{
-    query_row, query_rows, sqlite_open, table_exists, tx_begin_immediate, u64_to_sql,
+    query_count, query_row, query_rows, sqlite_open, table_exists, tx_begin_immediate, u64_to_sql,
     Error as DBError,
 };
 #[cfg(any(test, feature = "testing"))]
@@ -824,6 +824,16 @@ impl SignerDb {
         let result: Option<String> = query_row(&self.db, query, [tenure])?;
 
         try_deserialize(result)
+    }
+
+    /// Return the count of globally signed blocks in a tenure (identified by its consensus hash)
+    pub fn get_globally_signed_block_count_in_tenure(
+        &self,
+        tenure: &ConsensusHash,
+    ) -> Result<i64, DBError> {
+        let query = "SELECT COUNT(*) FROM blocks WHERE consensus_hash = ?1 AND state = ?2";
+        let args = params![tenure, &BlockState::GloballyAccepted.to_string()];
+        query_count(&self.db, query, args)
     }
 
     /// Return the last accepted block in a tenure (identified by its consensus hash).
@@ -1985,6 +1995,73 @@ mod tests {
 
         let pendings = db.get_all_pending_block_validations().unwrap();
         assert!(pendings.is_empty());
+    }
+
+    #[test]
+    fn check_globally_signed_block_count() {
+        let db_path = tmp_db_path();
+        let consensus_hash_1 = ConsensusHash([0x01; 20]);
+        let mut db = SignerDb::new(db_path).expect("Failed to create signer db");
+        let (mut block_info, _) = create_block_override(|b| {
+            b.block.header.consensus_hash = consensus_hash_1;
+        });
+
+        assert_eq!(
+            db.get_globally_signed_block_count_in_tenure(&consensus_hash_1)
+                .unwrap(),
+            0
+        );
+
+        block_info.signed_over = true;
+        block_info.state = BlockState::GloballyAccepted;
+        block_info.block.header.chain_length = 1;
+        db.insert_block(&block_info).unwrap();
+
+        assert_eq!(
+            db.get_globally_signed_block_count_in_tenure(&consensus_hash_1)
+                .unwrap(),
+            1
+        );
+
+        block_info.signed_over = true;
+        block_info.state = BlockState::GloballyAccepted;
+        block_info.block.header.chain_length = 2;
+        db.insert_block(&block_info).unwrap();
+
+        block_info.signed_over = true;
+        block_info.state = BlockState::GloballyAccepted;
+        block_info.block.header.chain_length = 3;
+        db.insert_block(&block_info).unwrap();
+
+        assert_eq!(
+            db.get_globally_signed_block_count_in_tenure(&consensus_hash_1)
+                .unwrap(),
+            3
+        );
+
+        // add an unsigned block
+        block_info.signed_over = false;
+        block_info.state = BlockState::GloballyAccepted;
+        block_info.block.header.chain_length = 4;
+        db.insert_block(&block_info).unwrap();
+
+        assert_eq!(
+            db.get_globally_signed_block_count_in_tenure(&consensus_hash_1)
+                .unwrap(),
+            4
+        );
+
+        // add a locally signed block
+        block_info.signed_over = true;
+        block_info.state = BlockState::LocallyAccepted;
+        block_info.block.header.chain_length = 5;
+        db.insert_block(&block_info).unwrap();
+
+        assert_eq!(
+            db.get_globally_signed_block_count_in_tenure(&consensus_hash_1)
+                .unwrap(),
+            4
+        );
     }
 
     #[test]

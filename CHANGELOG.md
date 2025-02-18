@@ -18,6 +18,7 @@ and this project adheres to the versioning scheme outlined in the [README.md](RE
 - Logging improvements:
   - P2P logs now includes a reason for dropping a peer or neighbor
   - Improvements to how a PeerAddress is logged (human readable format vs hex)
+- Signer will not allow reorg if more than one block in the current tenure has already been globally approved
 
 ### Fixed
 
